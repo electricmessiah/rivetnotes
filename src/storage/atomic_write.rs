@@ -18,6 +18,7 @@ use windows::Win32::Storage::FileSystem::{
 use windows::core::PCWSTR;
 
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(1);
+const TEMP_MARKER: &str = ".rivet-tmp.";
 
 pub fn atomic_write_bytes(dest: &Path, bytes: &[u8]) -> io::Result<()> {
     let parent = dest.parent().ok_or_else(|| {
@@ -70,7 +71,7 @@ pub fn cleanup_stale_temp_files(dir: &Path, max_age: Duration) -> io::Result<usi
             Some(value) => value,
             None => continue,
         };
-        if !file_name.contains(".tmp.") {
+        if !file_name.contains(TEMP_MARKER) {
             continue;
         }
 
@@ -106,7 +107,7 @@ fn temp_path_for(dest: &Path) -> PathBuf {
         .duration_since(UNIX_EPOCH)
         .unwrap_or(Duration::ZERO)
         .as_nanos();
-    parent.join(format!("{base}.tmp.{pid}.{nanos:x}.{seq:x}"))
+    parent.join(format!("{base}{TEMP_MARKER}{pid}.{nanos:x}.{seq:x}"))
 }
 
 #[cfg(windows)]
@@ -115,7 +116,7 @@ fn replace_file(dest: &Path, temp: &Path) -> io::Result<()> {
     let temp_w = path_to_wide(temp);
 
     if dest.exists() {
-        let replaced = unsafe {
+        match unsafe {
             ReplaceFileW(
                 PCWSTR(dest_w.as_ptr()),
                 PCWSTR(temp_w.as_ptr()),
@@ -124,22 +125,31 @@ fn replace_file(dest: &Path, temp: &Path) -> io::Result<()> {
                 None,
                 None,
             )
-        };
-        if replaced.is_ok() {
-            return Ok(());
+        } {
+            Ok(_) => return Ok(()),
+            Err(replace_err) => {
+                let flags = MOVE_FILE_FLAGS(MOVEFILE_REPLACE_EXISTING.0 | MOVEFILE_WRITE_THROUGH.0);
+                return match unsafe {
+                    MoveFileExW(PCWSTR(temp_w.as_ptr()), PCWSTR(dest_w.as_ptr()), flags)
+                } {
+                    Ok(_) => Ok(()),
+                    Err(move_err) => Err(io::Error::other(format!(
+                        "ReplaceFileW failed for {}: {replace_err}; MoveFileExW fallback failed: {move_err}",
+                        dest.display()
+                    ))),
+                };
+            }
         }
     }
 
     let flags = MOVE_FILE_FLAGS(MOVEFILE_REPLACE_EXISTING.0 | MOVEFILE_WRITE_THROUGH.0);
-    let moved = unsafe { MoveFileExW(PCWSTR(temp_w.as_ptr()), PCWSTR(dest_w.as_ptr()), flags) };
-    if moved.is_ok() {
-        return Ok(());
+    match unsafe { MoveFileExW(PCWSTR(temp_w.as_ptr()), PCWSTR(dest_w.as_ptr()), flags) } {
+        Ok(_) => Ok(()),
+        Err(err) => Err(io::Error::other(format!(
+            "MoveFileExW failed for {}: {err}",
+            dest.display()
+        ))),
     }
-
-    Err(io::Error::other(format!(
-        "ReplaceFileW/MoveFileExW failed for {}",
-        dest.display()
-    )))
 }
 
 #[cfg(not(windows))]
@@ -171,12 +181,46 @@ mod tests {
     }
 
     #[test]
+    fn atomic_write_json_replaces_whole_file() {
+        let temp = TempDir::new().unwrap();
+        let target = temp.path().join("session.json");
+        atomic_write_json(&target, &serde_json::json!({ "value": 1 })).unwrap();
+        atomic_write_json(&target, &serde_json::json!({ "value": 2 })).unwrap();
+
+        let parsed: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&target).unwrap()).unwrap();
+        assert_eq!(parsed["value"], 2);
+
+        let leftovers = std::fs::read_dir(temp.path())
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| {
+                entry
+                    .file_name()
+                    .to_str()
+                    .is_some_and(|name| name.contains(TEMP_MARKER))
+            })
+            .count();
+        assert_eq!(leftovers, 0);
+    }
+
+    #[test]
     fn cleanup_removes_old_temp_files() {
         let temp = TempDir::new().unwrap();
-        let stale = temp.path().join("session.json.tmp.1.2.3");
+        let stale = temp.path().join(format!("session.json{TEMP_MARKER}1.2.3"));
         std::fs::write(&stale, b"x").unwrap();
         let removed = cleanup_stale_temp_files(temp.path(), Duration::ZERO).unwrap();
         assert_eq!(removed, 1);
         assert!(!stale.exists());
+    }
+
+    #[test]
+    fn cleanup_ignores_non_atomic_temp_files() {
+        let temp = TempDir::new().unwrap();
+        let unrelated = temp.path().join("session.json.tmp.1.2.3");
+        std::fs::write(&unrelated, b"x").unwrap();
+        let removed = cleanup_stale_temp_files(temp.path(), Duration::ZERO).unwrap();
+        assert_eq!(removed, 0);
+        assert!(unrelated.exists());
     }
 }

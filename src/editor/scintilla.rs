@@ -93,8 +93,14 @@ const SCI_SHOWLINES: u32 = 2226;
 const SCI_HIDELINES: u32 = 2227;
 const SCI_SETELEMENTCOLOUR: u32 = 2753;
 const SCI_SETINDICATORCURRENT: u32 = 2500;
+const SCI_SETINDICATORVALUE: u32 = 2502;
 const SCI_INDICATORFILLRANGE: u32 = 2504;
 const SCI_INDICATORCLEARRANGE: u32 = 2505;
+const SCI_INDICATORALLONFOR: u32 = 2506;
+const SCI_INDICATORVALUEAT: u32 = 2507;
+const SCI_INDICATORSTART: u32 = 2508;
+const SCI_INDICATOREND: u32 = 2509;
+const SCI_INDICSETUNDER: u32 = 2510;
 const SCI_INDICSETALPHA: u32 = 2523;
 const SCI_INDICSETOUTLINEALPHA: u32 = 2558;
 
@@ -110,6 +116,7 @@ const SC_POPUP_NEVER: usize = 0;
 const SCMOD_SHIFT: usize = 0x1;
 const SCMOD_CTRL: usize = 0x2;
 const KEY_U: usize = b'U' as usize;
+const INDIC_STRIKE: usize = 4;
 const INDIC_ROUNDBOX: usize = 7;
 const SC_ELEMENT_HIDDEN_LINE: usize = 81;
 
@@ -587,8 +594,18 @@ pub fn configure_smart_highlight_indicator(
     );
 }
 
+pub fn configure_strike_indicator(hwnd: HWND, indicator: usize, fore_rgb: u32) {
+    send_message(hwnd, SCI_INDICSETSTYLE, indicator, INDIC_STRIKE as isize);
+    send_message(hwnd, SCI_INDICSETFORE, indicator, fore_rgb as isize);
+    send_message(hwnd, SCI_INDICSETUNDER, indicator, 0);
+}
+
 pub fn set_indicator_current(hwnd: HWND, indicator: usize) {
     send_message(hwnd, SCI_SETINDICATORCURRENT, indicator, 0);
+}
+
+pub fn set_indicator_value(hwnd: HWND, value: i32) {
+    send_message(hwnd, SCI_SETINDICATORVALUE, value as usize, 0);
 }
 
 pub fn fill_indicator_range(hwnd: HWND, start: usize, len: usize) {
@@ -597,6 +614,22 @@ pub fn fill_indicator_range(hwnd: HWND, start: usize, len: usize) {
 
 pub fn clear_indicator_range(hwnd: HWND, start: usize, len: usize) {
     send_message(hwnd, SCI_INDICATORCLEARRANGE, start, len as isize);
+}
+
+pub fn indicator_all_on_for(hwnd: HWND, pos: usize) -> u32 {
+    send_message(hwnd, SCI_INDICATORALLONFOR, pos, 0).0 as u32
+}
+
+pub fn indicator_value_at(hwnd: HWND, indicator: usize, pos: usize) -> i32 {
+    send_message(hwnd, SCI_INDICATORVALUEAT, indicator, pos as isize).0 as i32
+}
+
+pub fn indicator_start(hwnd: HWND, indicator: usize, pos: usize) -> usize {
+    send_message(hwnd, SCI_INDICATORSTART, indicator, pos as isize).0 as usize
+}
+
+pub fn indicator_end(hwnd: HWND, indicator: usize, pos: usize) -> usize {
+    send_message(hwnd, SCI_INDICATOREND, indicator, pos as isize).0 as usize
 }
 
 pub fn hide_lines(hwnd: HWND, line_start: usize, line_end: usize) {

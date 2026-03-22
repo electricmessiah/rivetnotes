@@ -22,7 +22,7 @@ const APP_DIR_NAME: &str = "Rivet";
 const SESSIONS_DIR_NAME: &str = "sessions";
 const BACKUP_DIR_NAME: &str = "backup";
 const SESSION_FILE_NAME: &str = "session.json";
-const SESSION_SCHEMA_VERSION: u32 = 1;
+const SESSION_SCHEMA_VERSION: u32 = 2;
 
 const TEMP_CLEANUP_MAX_AGE_DAYS: u64 = 7;
 
@@ -32,6 +32,12 @@ static TEST_ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 #[cfg(test)]
 pub(crate) fn test_env_lock() -> &'static Mutex<()> {
     TEST_ENV_LOCK.get_or_init(|| Mutex::new(()))
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct StrikeRange {
+    pub start: i64,
+    pub end: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -52,6 +58,8 @@ pub struct SessionEntry {
     pub backup_timestamp: Option<u64>,
     #[serde(default)]
     pub disk_timestamp_at_backup: Option<u64>,
+    #[serde(default)]
+    pub strike_ranges: Vec<StrikeRange>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -124,9 +132,10 @@ pub enum RestoreSource {
 
 #[derive(Debug, Clone)]
 pub struct RestoreDecisionInput {
+    pub remember_session: bool,
     pub path: Option<PathBuf>,
     pub backup_path: PathBuf,
-    pub is_dirty: bool,
+    pub was_dirty_at_exit: bool,
     pub backup_modified: Option<SystemTime>,
     pub disk_modified: Option<SystemTime>,
 }
@@ -137,7 +146,7 @@ pub fn decide_restore_source(input: &RestoreDecisionInput) -> RestoreSource {
             let has_disk = input.disk_modified.is_some() || path.exists();
             let has_backup = input.backup_modified.is_some() || input.backup_path.exists();
 
-            if input.is_dirty && has_backup {
+            if input.remember_session && input.was_dirty_at_exit && has_backup {
                 return RestoreSource::Backup;
             }
             if has_disk {
@@ -356,6 +365,10 @@ mod tests {
                     cursor_pos: 11,
                     backup_timestamp: Some(123),
                     disk_timestamp_at_backup: Some(456),
+                    strike_ranges: vec![
+                        StrikeRange { start: 2, end: 7 },
+                        StrikeRange { start: 10, end: 12 },
+                    ],
                 }],
             };
 
@@ -406,9 +419,10 @@ mod tests {
     fn restore_decision_prefers_backup_when_marked_dirty() {
         let now = SystemTime::now();
         let input = RestoreDecisionInput {
+            remember_session: true,
             path: Some(PathBuf::from("C:\\tmp\\file.txt")),
             backup_path: PathBuf::from("C:\\tmp\\backup.bak"),
-            is_dirty: true,
+            was_dirty_at_exit: true,
             backup_modified: Some(now),
             disk_modified: None,
         };
@@ -419,9 +433,10 @@ mod tests {
     fn restore_decision_uses_disk_when_not_dirty_and_backup_not_newer() {
         let now = SystemTime::now();
         let input = RestoreDecisionInput {
+            remember_session: true,
             path: Some(PathBuf::from("C:\\tmp\\file.txt")),
             backup_path: PathBuf::from("C:\\tmp\\backup.bak"),
-            is_dirty: false,
+            was_dirty_at_exit: false,
             backup_modified: Some(now),
             disk_modified: Some(now),
         };
@@ -432,13 +447,28 @@ mod tests {
     fn restore_decision_clean_named_without_disk_skips_even_with_backup() {
         let now = SystemTime::now();
         let input = RestoreDecisionInput {
+            remember_session: true,
             path: Some(PathBuf::from("C:\\tmp\\missing.txt")),
             backup_path: PathBuf::from("C:\\tmp\\backup.bak"),
-            is_dirty: false,
+            was_dirty_at_exit: false,
             backup_modified: Some(now),
             disk_modified: None,
         };
         assert_eq!(decide_restore_source(&input), RestoreSource::Skip);
+    }
+
+    #[test]
+    fn restore_decision_without_remember_session_uses_disk_for_named_files() {
+        let now = SystemTime::now();
+        let input = RestoreDecisionInput {
+            remember_session: false,
+            path: Some(PathBuf::from("C:\\tmp\\file.txt")),
+            backup_path: PathBuf::from("C:\\tmp\\backup.bak"),
+            was_dirty_at_exit: true,
+            backup_modified: Some(now),
+            disk_modified: Some(now),
+        };
+        assert_eq!(decide_restore_source(&input), RestoreSource::Disk);
     }
 
     #[test]
@@ -447,9 +477,10 @@ mod tests {
         let backup = temp.path().join("untitled.bak");
         std::fs::write(&backup, b"untitled content").unwrap();
         let input = RestoreDecisionInput {
+            remember_session: true,
             path: None,
             backup_path: backup,
-            is_dirty: true,
+            was_dirty_at_exit: true,
             backup_modified: Some(SystemTime::now()),
             disk_modified: None,
         };
@@ -483,15 +514,17 @@ mod tests {
                     cursor_pos: 0,
                     backup_timestamp: None,
                     disk_timestamp_at_backup: None,
+                    strike_ranges: vec![StrikeRange { start: 1, end: 4 }],
                 }],
             };
             save_session(&data).unwrap();
             let loaded = load_session().unwrap();
             let entry = &loaded.entries[0];
             let decision = decide_restore_source(&RestoreDecisionInput {
+                remember_session: loaded.remember_session,
                 path: entry.path.clone(),
                 backup_path: entry.backup_path.clone(),
-                is_dirty: entry.is_dirty,
+                was_dirty_at_exit: entry.is_dirty,
                 backup_modified: modified_time(&entry.backup_path).ok(),
                 disk_modified: entry
                     .path
@@ -502,5 +535,28 @@ mod tests {
             let restored = std::fs::read_to_string(&entry.backup_path).unwrap();
             assert_eq!(restored, "from-backup");
         });
+    }
+
+    #[test]
+    fn strike_ranges_default_to_empty_when_missing() {
+        let json = r#"{
+            "schema_version":1,
+            "app_version":"0.2.1",
+            "remember_session":true,
+            "session_snapshot_periodic_backup":true,
+            "backup_interval_seconds":7,
+            "word_wrap_enabled":true,
+            "always_on_top":false,
+            "entries":[{
+                "tab_id":"00000000-0000-0000-0000-000000000001",
+                "path":"C:\\notes\\sample.txt",
+                "display_name":"sample.txt",
+                "backup_file":"C:\\notes\\sample.bak",
+                "was_dirty_at_last_exit":false,
+                "cursor_pos":0
+            }]
+        }"#;
+        let parsed: SessionData = serde_json::from_str(json).unwrap();
+        assert!(parsed.entries[0].strike_ranges.is_empty());
     }
 }

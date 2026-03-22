@@ -107,6 +107,24 @@ impl Document {
     }
 }
 
+pub fn large_file_threshold_bytes(threshold_mb: u32) -> u64 {
+    (threshold_mb as u64).saturating_mul(1024 * 1024)
+}
+
+pub fn is_large_file_size(threshold_mb: u32, size_bytes: u64) -> bool {
+    size_bytes >= large_file_threshold_bytes(threshold_mb)
+}
+
+pub fn encoded_size_for_text(text: &str, encoding: TextEncoding) -> u64 {
+    match encoding {
+        TextEncoding::Utf8 => text.len() as u64,
+        TextEncoding::Utf8Bom => text.len() as u64 + 3,
+        TextEncoding::Utf16Le | TextEncoding::Utf16Be => {
+            2 + (text.encode_utf16().count() as u64).saturating_mul(2)
+        }
+    }
+}
+
 pub fn detect_eol(text: &str) -> Eol {
     if let Some(index) = text.find('\n') {
         if index > 0 && text.as_bytes()[index - 1] == b'\r' {
@@ -316,12 +334,17 @@ mod tests {
 
     #[test]
     fn large_file_threshold() {
-        const LARGE_FILE_THRESHOLD: u64 = 100 * 1024 * 1024;
-        fn is_large_file(size: u64) -> bool {
-            size >= LARGE_FILE_THRESHOLD
-        }
-        assert!(is_large_file(LARGE_FILE_THRESHOLD));
-        assert!(!is_large_file(LARGE_FILE_THRESHOLD - 1));
+        assert_eq!(large_file_threshold_bytes(100), 100 * 1024 * 1024);
+        assert!(is_large_file_size(100, 100 * 1024 * 1024));
+        assert!(!is_large_file_size(100, (100 * 1024 * 1024) - 1));
+    }
+
+    #[test]
+    fn encoded_size_matches_encoding() {
+        assert_eq!(encoded_size_for_text("hello", TextEncoding::Utf8), 5);
+        assert_eq!(encoded_size_for_text("hello", TextEncoding::Utf8Bom), 8);
+        assert_eq!(encoded_size_for_text("hello", TextEncoding::Utf16Le), 12);
+        assert_eq!(encoded_size_for_text("hello", TextEncoding::Utf16Be), 12);
     }
 
     #[test]

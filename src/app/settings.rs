@@ -1,10 +1,11 @@
 use std::path::PathBuf;
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
 use crate::app::session;
 use crate::error::{AppError, Result};
-use crate::storage::atomic_write::atomic_write_json;
+use crate::storage::atomic_write::{atomic_write_json, cleanup_stale_temp_files};
 
 pub const SETTINGS_FILE_NAME: &str = "settings.json";
 pub const MIN_VERTICAL_TAB_WIDTH_PX: i32 = 80;
@@ -17,8 +18,8 @@ pub const DEFAULT_SMART_HIGHLIGHT_WHOLE_WORD: bool = true;
 pub const DEFAULT_LARGE_FILE_THRESHOLD_MB: u32 = 20;
 pub const MIN_LARGE_FILE_THRESHOLD_MB: u32 = 1;
 pub const MAX_LARGE_FILE_THRESHOLD_MB: u32 = 1024;
-pub const DEFAULT_LARGE_FILE_DISABLE_WORD_WRAP_GLOBALLY: bool = false;
-pub const DEFAULT_LARGE_FILE_ALLOW_SMART_HIGHLIGHT: bool = false;
+pub const DEFAULT_LARGE_FILE_DISABLE_WORD_WRAP: bool = true;
+pub const DEFAULT_LARGE_FILE_DISABLE_SMART_HIGHLIGHT: bool = true;
 
 #[derive(Debug, Copy, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "lowercase")]
@@ -39,7 +40,7 @@ impl TabPlacement {
     }
 }
 
-#[derive(Debug, Copy, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Copy, Clone, Serialize, PartialEq, Eq)]
 pub struct UiSettings {
     #[serde(default)]
     pub tab_placement: TabPlacement,
@@ -53,12 +54,13 @@ pub struct UiSettings {
     pub smart_highlight_match_case: bool,
     #[serde(default = "default_smart_highlight_whole_word")]
     pub smart_highlight_whole_word: bool,
+    /// `settings.json`: files at or above this many MiB enter Large File Mode.
     #[serde(default = "default_large_file_threshold_mb")]
     pub large_file_threshold_mb: u32,
-    #[serde(default = "default_large_file_disable_word_wrap_globally")]
-    pub large_file_disable_word_wrap_globally: bool,
-    #[serde(default = "default_large_file_allow_smart_highlight")]
-    pub large_file_allow_smart_highlight: bool,
+    /// `settings.json`: when true, Large File Mode suppresses word wrap for that tab.
+    pub large_file_disable_word_wrap: bool,
+    /// `settings.json`: when true, Large File Mode suppresses smart highlight for that tab.
+    pub large_file_disable_smart_highlight: bool,
 }
 
 impl Default for UiSettings {
@@ -71,9 +73,66 @@ impl Default for UiSettings {
             smart_highlight_match_case: DEFAULT_SMART_HIGHLIGHT_MATCH_CASE,
             smart_highlight_whole_word: DEFAULT_SMART_HIGHLIGHT_WHOLE_WORD,
             large_file_threshold_mb: DEFAULT_LARGE_FILE_THRESHOLD_MB,
-            large_file_disable_word_wrap_globally: DEFAULT_LARGE_FILE_DISABLE_WORD_WRAP_GLOBALLY,
-            large_file_allow_smart_highlight: DEFAULT_LARGE_FILE_ALLOW_SMART_HIGHLIGHT,
+            large_file_disable_word_wrap: DEFAULT_LARGE_FILE_DISABLE_WORD_WRAP,
+            large_file_disable_smart_highlight: DEFAULT_LARGE_FILE_DISABLE_SMART_HIGHLIGHT,
         }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct UiSettingsWire {
+    #[serde(default)]
+    tab_placement: TabPlacement,
+    #[serde(default = "default_vertical_tab_width_px")]
+    vertical_tab_width_px: i32,
+    #[serde(default = "default_editor_dark")]
+    editor_dark: bool,
+    #[serde(default = "default_smart_highlight_enabled")]
+    smart_highlight_enabled: bool,
+    #[serde(default = "default_smart_highlight_match_case")]
+    smart_highlight_match_case: bool,
+    #[serde(default = "default_smart_highlight_whole_word")]
+    smart_highlight_whole_word: bool,
+    #[serde(default = "default_large_file_threshold_mb")]
+    large_file_threshold_mb: u32,
+    #[serde(default)]
+    large_file_disable_word_wrap: Option<bool>,
+    #[serde(default)]
+    large_file_disable_word_wrap_globally: Option<bool>,
+    #[serde(default)]
+    large_file_disable_smart_highlight: Option<bool>,
+    #[serde(default)]
+    large_file_allow_smart_highlight: Option<bool>,
+}
+
+impl From<UiSettingsWire> for UiSettings {
+    fn from(value: UiSettingsWire) -> Self {
+        Self {
+            tab_placement: value.tab_placement,
+            vertical_tab_width_px: value.vertical_tab_width_px,
+            editor_dark: value.editor_dark,
+            smart_highlight_enabled: value.smart_highlight_enabled,
+            smart_highlight_match_case: value.smart_highlight_match_case,
+            smart_highlight_whole_word: value.smart_highlight_whole_word,
+            large_file_threshold_mb: value.large_file_threshold_mb,
+            large_file_disable_word_wrap: value
+                .large_file_disable_word_wrap
+                .or(value.large_file_disable_word_wrap_globally)
+                .unwrap_or(DEFAULT_LARGE_FILE_DISABLE_WORD_WRAP),
+            large_file_disable_smart_highlight: value
+                .large_file_disable_smart_highlight
+                .or_else(|| value.large_file_allow_smart_highlight.map(|allow| !allow))
+                .unwrap_or(DEFAULT_LARGE_FILE_DISABLE_SMART_HIGHLIGHT),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for UiSettings {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        UiSettingsWire::deserialize(deserializer).map(|wire| wire.into())
     }
 }
 
@@ -116,7 +175,9 @@ pub fn save_settings(settings: &UiSettings) -> Result<()> {
 fn ensure_settings_dir() -> Result<()> {
     let dir = session::data_dir()?;
     std::fs::create_dir_all(&dir)
-        .map_err(|err| AppError::new(format!("Failed to create settings directory: {err}")))
+        .map_err(|err| AppError::new(format!("Failed to create settings directory: {err}")))?;
+    let _ = cleanup_stale_temp_files(&dir, Duration::from_secs(7 * 24 * 60 * 60));
+    Ok(())
 }
 
 fn default_vertical_tab_width_px() -> i32 {
@@ -141,14 +202,6 @@ fn default_smart_highlight_whole_word() -> bool {
 
 fn default_large_file_threshold_mb() -> u32 {
     DEFAULT_LARGE_FILE_THRESHOLD_MB
-}
-
-fn default_large_file_disable_word_wrap_globally() -> bool {
-    DEFAULT_LARGE_FILE_DISABLE_WORD_WRAP_GLOBALLY
-}
-
-fn default_large_file_allow_smart_highlight() -> bool {
-    DEFAULT_LARGE_FILE_ALLOW_SMART_HIGHLIGHT
 }
 
 #[cfg(test)]
@@ -240,8 +293,8 @@ mod tests {
             smart_highlight_match_case: true,
             smart_highlight_whole_word: false,
             large_file_threshold_mb: 50,
-            large_file_disable_word_wrap_globally: true,
-            large_file_allow_smart_highlight: true,
+            large_file_disable_word_wrap: true,
+            large_file_disable_smart_highlight: true,
         };
         let json = serde_json::to_string_pretty(&settings).unwrap();
         assert!(json.contains("\"tab_placement\": \"right\""));
@@ -249,6 +302,8 @@ mod tests {
         assert!(json.contains("\"editor_dark\": false"));
         assert!(json.contains("\"smart_highlight_enabled\": false"));
         assert!(json.contains("\"large_file_threshold_mb\": 50"));
+        assert!(json.contains("\"large_file_disable_word_wrap\": true"));
+        assert!(json.contains("\"large_file_disable_smart_highlight\": true"));
 
         let parsed: UiSettings = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed, settings);
@@ -295,6 +350,27 @@ mod tests {
             assert_eq!(loaded.vertical_tab_width_px, MAX_VERTICAL_TAB_WIDTH_PX);
             assert_eq!(loaded.editor_dark, DEFAULT_EDITOR_DARK);
             assert_eq!(loaded.large_file_threshold_mb, MIN_LARGE_FILE_THRESHOLD_MB);
+        });
+    }
+
+    #[test]
+    fn load_accepts_legacy_large_file_setting_keys() {
+        with_temp_local_appdata(|| {
+            let path = settings_file_path().unwrap();
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(
+                &path,
+                r#"{
+  "large_file_threshold_mb": 32,
+  "large_file_disable_word_wrap_globally": true,
+  "large_file_allow_smart_highlight": true
+}"#,
+            )
+            .unwrap();
+            let loaded = load_settings().unwrap();
+            assert_eq!(loaded.large_file_threshold_mb, 32);
+            assert!(loaded.large_file_disable_word_wrap);
+            assert!(!loaded.large_file_disable_smart_highlight);
         });
     }
 }

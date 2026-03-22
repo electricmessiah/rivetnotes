@@ -10,7 +10,8 @@ use windows::Win32::Foundation::{
     POINT, WPARAM,
 };
 use windows::Win32::Graphics::Gdi::{
-    CreateSolidBrush, DeleteObject, HBRUSH, InvalidateRect, ScreenToClient,
+    BeginPaint, CreateSolidBrush, DeleteObject, EndPaint, FillRect, HBRUSH, InvalidateRect,
+    PAINTSTRUCT, ScreenToClient,
 };
 use windows::Win32::System::Com::CoTaskMemFree;
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
@@ -37,7 +38,7 @@ use windows::Win32::UI::HiDpi::{
 use windows::Win32::UI::Input::KeyboardAndMouse::{ReleaseCapture, SetCapture};
 use windows::Win32::UI::Shell::{
     BIF_NEWDIALOGSTYLE, BIF_RETURNONLYFSDIRS, BROWSEINFOW, DragAcceptFiles, DragFinish,
-    DragQueryFileW, HDROP, SHBrowseForFolderW, SHGetPathFromIDListW,
+    DragQueryFileW, HDROP, SHBrowseForFolderW, SHGetPathFromIDListW, ShellExecuteW,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     ACCEL, AppendMenuW, BM_GETCHECK, BM_SETCHECK, BS_AUTOCHECKBOX, BS_DEFPUSHBUTTON, BS_PUSHBUTTON,
@@ -56,11 +57,12 @@ use windows::Win32::UI::WindowsAndMessaging::{
     SW_SHOW, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SYSTEM_METRICS_INDEX,
     SendMessageW, SetClassLongPtrW, SetCursor, SetTimer, SetWindowLongPtrW, SetWindowPos,
     SetWindowTextW, ShowWindow, TPM_NONOTIFY, TPM_RETURNCMD, TPM_RIGHTBUTTON, TrackPopupMenu,
-    TranslateAcceleratorW, TranslateMessage, WINDOW_STYLE, WM_ACTIVATEAPP, WM_CLOSE, WM_COMMAND,
-    WM_CONTEXTMENU, WM_CREATE, WM_DESTROY, WM_DROPFILES, WM_GETICON, WM_INITMENUPOPUP,
-    WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONUP, WM_MOUSEMOVE, WM_NCDESTROY, WM_NOTIFY,
-    WM_SETCURSOR, WM_SETICON, WM_SIZE, WM_TIMER, WNDCLASSEXW, WS_BORDER, WS_CAPTION, WS_CHILD,
-    WS_CLIPSIBLINGS, WS_OVERLAPPEDWINDOW, WS_SYSMENU, WS_TABSTOP, WS_VISIBLE, WS_VSCROLL,
+    TranslateAcceleratorW, TranslateMessage, WINDOW_STYLE, WM_ACTIVATEAPP, WM_CAPTURECHANGED,
+    WM_CLOSE, WM_COMMAND, WM_CONTEXTMENU, WM_CREATE, WM_DESTROY, WM_DROPFILES, WM_GETICON,
+    WM_INITMENUPOPUP, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONUP, WM_MOUSEMOVE, WM_NCDESTROY,
+    WM_NOTIFY, WM_PAINT, WM_SETCURSOR, WM_SETICON, WM_SIZE, WM_TIMER, WNDCLASSEXW, WS_BORDER,
+    WS_CAPTION, WS_CHILD, WS_CLIPSIBLINGS, WS_OVERLAPPEDWINDOW, WS_SYSMENU, WS_TABSTOP, WS_VISIBLE,
+    WS_VSCROLL,
 };
 use windows::core::PWSTR;
 use windows::core::{HSTRING, PCWSTR, w};
@@ -77,6 +79,7 @@ use crate::editor::scintilla;
 use crate::error::{AppError, Result};
 use crate::logging;
 use crate::platform::clipboard::{Clipboard, WinClipboard};
+use crate::textops::checkbox::{insert_checkbox_line, toggle_checkbox_line};
 use crate::textops::trim::{trim_edges_spaces_tabs, trim_line_preserve_eol};
 use regex::RegexBuilder;
 
@@ -101,6 +104,9 @@ const IDM_EDIT_MOVE_LINE_DOWN: u16 = 309;
 const IDM_EDIT_INDENT: u16 = 310;
 const IDM_EDIT_OUTDENT: u16 = 311;
 const CMD_TRIM_LEADING_TRAILING: u16 = 312;
+const CMD_TOGGLE_CHECKBOX: u16 = 313;
+const CMD_INSERT_CHECKBOX: u16 = 314;
+const IDM_EDIT_TOGGLE_STRIKETHROUGH: u16 = 315;
 const IDM_EDIT_FIND: u16 = 320;
 const IDM_EDIT_FIND_NEXT: u16 = 321;
 const IDM_EDIT_FIND_PREV: u16 = 322;
@@ -138,6 +144,8 @@ const TIMER_WORD_COUNT: usize = 3;
 const WORD_COUNT_INTERVAL_MS: u32 = 250;
 const TAB_SPLITTER_WIDTH: i32 = 4;
 const SMART_HL_INDIC: usize = 8;
+const STRIKE_INDIC: usize = 9;
+const STRIKE_INDIC_VALUE: i32 = 1;
 const SMART_HL_MAX_TOKEN_LEN: usize = 128;
 const SMART_HL_MAX_MATCHES: usize = 5000;
 
@@ -221,6 +229,7 @@ struct DocTab {
     editor: HWND,
     doc: Document,
     wrap_enabled: bool,
+    sticky_dirty: bool,
     word_count: Option<usize>,
     change_counter: u64,
     last_backup_change_counter: Option<u64>,
@@ -228,7 +237,7 @@ struct DocTab {
     smart_highlight_truncated: bool,
 }
 
-struct FindState {
+struct SearchState {
     find_text: String,
     replace_text: String,
     match_case: bool,
@@ -236,6 +245,12 @@ struct FindState {
     regex: bool,
     wrap: bool,
     last_direction: SearchDirection,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+enum SearchDialogMode {
+    Find,
+    Replace,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -247,11 +262,32 @@ enum SearchDirection {
 struct FindDialogState {
     hwnd: HWND,
     find_edit: HWND,
+    replace_label: HWND,
     replace_edit: HWND,
     match_case: HWND,
     whole_word: HWND,
     regex: HWND,
     wrap: HWND,
+    replace_btn: HWND,
+    replace_all: HWND,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+struct SearchRange {
+    start: usize,
+    end: usize,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+struct SearchPlan {
+    primary: SearchRange,
+    wrapped: Option<SearchRange>,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+struct ReplaceAllProgress {
+    next_search_start: usize,
+    next_doc_len: usize,
 }
 
 struct GoToLineDialogState {
@@ -286,6 +322,14 @@ struct FindInFilesState {
     receiver: Option<Receiver<FindResult>>,
     running: bool,
     hits: Vec<FindHit>,
+}
+
+struct AboutDetails {
+    version: &'static str,
+    git_sha: &'static str,
+    build_utc: &'static str,
+    source_url: &'static str,
+    data_dir: PathBuf,
 }
 
 #[derive(Copy, Clone)]
@@ -335,10 +379,12 @@ struct AppState {
     backup_interval_seconds: u32,
     word_wrap_enabled: bool,
     next_untitled_index: usize,
-    find_state: FindState,
+    search_state: SearchState,
+    search_dialog_mode: SearchDialogMode,
     find_dialog: Option<FindDialogState>,
     go_to_line_dialog: Option<GoToLineDialogState>,
     find_in_files: Option<FindInFilesState>,
+    status_message: Option<String>,
 }
 
 pub fn run() -> Result<()> {
@@ -434,32 +480,94 @@ pub fn show_error(title: &str, message: &str) {
 }
 
 fn show_about_dialog(hwnd: HWND) -> Result<()> {
-    let version = option_env!("RIVET_VERSION").unwrap_or(env!("CARGO_PKG_VERSION"));
-    let git_sha = option_env!("RIVET_GIT_SHA").unwrap_or("unknown");
-    let build_utc = option_env!("RIVET_BUILD_UTC").unwrap_or("unknown");
-    let source_url = option_env!("RIVET_SOURCE_URL").unwrap_or("unknown");
-    let data_dir = session::data_dir()?;
-
-    let details = format!(
-        "Rivet {version}\r\n\r\nCommit: {git_sha}\r\nBuilt: {build_utc}\r\nSource: {source_url}\r\nData: {}\r\n\r\nPress Yes to copy details to clipboard.",
-        data_dir.display()
-    );
+    let details = current_about_details()?;
+    let about_text = format_about_details(&details);
+    let (message, buttons) = if details.source_url == "unknown" {
+        (
+            format!("{about_text}\r\n\r\nPress Yes to copy details to clipboard."),
+            MB_YESNO | MB_ICONINFORMATION,
+        )
+    } else {
+        (
+            format!(
+                "{about_text}\r\n\r\nYes copies details to the clipboard. No opens the source page."
+            ),
+            MB_YESNOCANCEL | MB_ICONINFORMATION,
+        )
+    };
     let title = HSTRING::from("About Rivet");
-    let message = HSTRING::from(&details);
+    let message = HSTRING::from(&message);
     let result = unsafe {
         MessageBoxW(
             hwnd,
             PCWSTR::from_raw(message.as_ptr()),
             PCWSTR::from_raw(title.as_ptr()),
-            MB_YESNO | MB_ICONINFORMATION,
+            buttons,
         )
     };
 
-    if result == IDYES {
-        let mut clipboard = WinClipboard::new(hwnd);
-        clipboard
-            .set_unicode_text(&details)
-            .map_err(|err| AppError::new(format!("Failed to copy about details: {err}")))?;
+    match result {
+        IDYES => copy_about_details(hwnd, &about_text)?,
+        IDNO if details.source_url != "unknown" => open_source_url(hwnd, details.source_url)?,
+        _ => {}
+    }
+
+    Ok(())
+}
+
+fn current_about_details() -> Result<AboutDetails> {
+    Ok(AboutDetails {
+        version: option_env!("RIVET_VERSION").unwrap_or(env!("CARGO_PKG_VERSION")),
+        git_sha: option_env!("RIVET_GIT_SHA").unwrap_or("unknown"),
+        build_utc: option_env!("RIVET_BUILD_UTC").unwrap_or("unknown"),
+        source_url: option_env!("RIVET_SOURCE_URL").unwrap_or("unknown"),
+        data_dir: session::data_dir()?,
+    })
+}
+
+fn format_about_details(details: &AboutDetails) -> String {
+    format!(
+        "Rivet {}\r\n\r\nCommit: {}\r\nBuild UTC: {}\r\nSource link: {}\r\nData dir: {}",
+        details.version,
+        short_git_sha(details.git_sha),
+        details.build_utc,
+        details.source_url,
+        details.data_dir.display()
+    )
+}
+
+fn short_git_sha(git_sha: &str) -> &str {
+    if git_sha == "unknown" {
+        return git_sha;
+    }
+    git_sha.get(..12).unwrap_or(git_sha)
+}
+
+fn copy_about_details(hwnd: HWND, details: &str) -> Result<()> {
+    let mut clipboard = WinClipboard::new(hwnd);
+    clipboard
+        .set_unicode_text(details)
+        .map_err(|err| AppError::new(format!("Failed to copy about details: {err}")))
+}
+
+fn open_source_url(hwnd: HWND, source_url: &str) -> Result<()> {
+    let verb = HSTRING::from("open");
+    let url = HSTRING::from(source_url);
+    let result = unsafe {
+        ShellExecuteW(
+            hwnd,
+            PCWSTR::from_raw(verb.as_ptr()),
+            PCWSTR::from_raw(url.as_ptr()),
+            PCWSTR::null(),
+            PCWSTR::null(),
+            SW_SHOW,
+        )
+    };
+
+    if result.0 as isize <= 32 {
+        return Err(AppError::new(format!(
+            "Failed to open source URL: {source_url}"
+        )));
     }
 
     Ok(())
@@ -610,6 +718,13 @@ fn create_menu() -> Result<HMENU> {
             MF_STRING,
             IDM_EDIT_OUTDENT as usize,
             w!("Outdent"),
+        )?;
+        AppendMenuW(edit_menu, MF_SEPARATOR, 0, PCWSTR::null())?;
+        AppendMenuW(
+            edit_menu,
+            MF_STRING,
+            IDM_EDIT_TOGGLE_STRIKETHROUGH as usize,
+            w!("Toggle Strikethrough"),
         )?;
         AppendMenuW(edit_menu, MF_SEPARATOR, 0, PCWSTR::null())?;
         AppendMenuW(
@@ -1025,16 +1140,26 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
         WM_LBUTTONUP => unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) },
         WM_CONTEXTMENU => {
             let source = HWND(wparam.0 as isize);
-            if let Some(state) = get_state(hwnd)
-                && doc_index_by_hwnd(state, source).is_some()
-            {
-                let (x, y) = context_menu_position(lparam);
-                if let Some(command_id) = show_editor_context_menu(hwnd, source, x, y) {
-                    unsafe {
-                        SendMessageW(hwnd, WM_COMMAND, WPARAM(command_id as usize), LPARAM(0));
+            if let Some(state) = get_state(hwnd) {
+                if lparam.0 == -1
+                    && let Some((index, x, y)) = keyboard_tab_context_menu_target(state, source)
+                {
+                    if let Some(command_id) = show_tab_context_menu(hwnd, state, index, x, y) {
+                        unsafe {
+                            SendMessageW(hwnd, WM_COMMAND, WPARAM(command_id as usize), LPARAM(0));
+                        }
                     }
+                    return LRESULT(0);
                 }
-                return LRESULT(0);
+                if doc_index_by_hwnd(state, source).is_some() {
+                    let (x, y) = context_menu_position(lparam);
+                    if let Some(command_id) = show_editor_context_menu(hwnd, source, x, y) {
+                        unsafe {
+                            SendMessageW(hwnd, WM_COMMAND, WPARAM(command_id as usize), LPARAM(0));
+                        }
+                    }
+                    return LRESULT(0);
+                }
             }
             unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
         }
@@ -1065,7 +1190,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                 }
                 IDM_EDIT_FIND => {
                     if let Some(state) = get_state(hwnd)
-                        && let Err(err) = show_find_dialog(hwnd, state, true)
+                        && let Err(err) = show_find_dialog(hwnd, state, SearchDialogMode::Find)
                     {
                         show_error("Rivet error", &err.to_string());
                     }
@@ -1089,7 +1214,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                 }
                 IDM_EDIT_REPLACE => {
                     if let Some(state) = get_state(hwnd)
-                        && let Err(err) = show_find_dialog(hwnd, state, false)
+                        && let Err(err) = show_find_dialog(hwnd, state, SearchDialogMode::Replace)
                     {
                         show_error("Rivet error", &err.to_string());
                     }
@@ -1263,6 +1388,41 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                         && let Some(editor) = active_editor(state)
                     {
                         trim_leading_and_trailing_whitespace(editor);
+                    }
+                    LRESULT(0)
+                }
+                IDM_EDIT_TOGGLE_STRIKETHROUGH => {
+                    if let Some(state) = get_state(hwnd) {
+                        let index = state.active;
+                        let toggled = state
+                            .docs
+                            .get_mut(index)
+                            .map(|doc_tab| self::toggle_strikethrough(doc_tab.editor))
+                            .unwrap_or(false);
+                        if toggled {
+                            if let Err(err) = save_session_checkpoint(state) {
+                                logging::log_error(&format!(
+                                    "session_save_after_toggle_strikethrough_failed err={err}"
+                                ));
+                            }
+                            update_status(state);
+                        }
+                    }
+                    LRESULT(0)
+                }
+                CMD_TOGGLE_CHECKBOX => {
+                    if let Some(state) = get_state(hwnd)
+                        && let Some(editor) = active_editor(state)
+                    {
+                        toggle_checkboxes(editor);
+                    }
+                    LRESULT(0)
+                }
+                CMD_INSERT_CHECKBOX => {
+                    if let Some(state) = get_state(hwnd)
+                        && let Some(editor) = active_editor(state)
+                    {
+                        insert_checkboxes(editor);
                     }
                     LRESULT(0)
                 }
@@ -1804,7 +1964,7 @@ fn create_children(hwnd: HWND, instance: HINSTANCE) -> Result<AppState> {
         backup_interval_seconds: session::DEFAULT_BACKUP_INTERVAL_SECONDS,
         word_wrap_enabled: session::DEFAULT_WORD_WRAP_ENABLED,
         next_untitled_index: 1,
-        find_state: FindState {
+        search_state: SearchState {
             find_text: String::new(),
             replace_text: String::new(),
             match_case: false,
@@ -1813,9 +1973,11 @@ fn create_children(hwnd: HWND, instance: HINSTANCE) -> Result<AppState> {
             wrap: true,
             last_direction: SearchDirection::Down,
         },
+        search_dialog_mode: SearchDialogMode::Find,
         find_dialog: None,
         go_to_line_dialog: None,
         find_in_files: None,
+        status_message: None,
     };
 
     let mut state = restore_session(hwnd, state)?;
@@ -2011,11 +2173,14 @@ fn open_path_new_tab(
     eol: Option<Eol>,
 ) -> Result<()> {
     let instance = module_instance()?;
+    let wrap_enabled = wrap.unwrap_or(state.word_wrap_enabled);
     let mut doc_tab = create_doc_from_path(
         hwnd,
         instance,
         path,
+        wrap_enabled,
         state.ui_settings.large_file_threshold_mb,
+        state.ui_settings.large_file_disable_word_wrap,
     )?;
     if let Some(encoding) = encoding {
         doc_tab.doc.encoding = encoding;
@@ -2023,15 +2188,6 @@ fn open_path_new_tab(
     if let Some(eol) = eol {
         doc_tab.doc.eol = eol;
         scintilla::set_eol_mode(doc_tab.editor, eol);
-    }
-    if let Some(wrap) = wrap {
-        doc_tab.wrap_enabled = wrap;
-        let enable = wrap && !doc_tab.doc.large_file_mode;
-        scintilla::set_wrap_enabled(doc_tab.editor, enable);
-    } else {
-        doc_tab.wrap_enabled = state.word_wrap_enabled;
-        let enable = state.word_wrap_enabled && !doc_tab.doc.large_file_mode;
-        scintilla::set_wrap_enabled(doc_tab.editor, enable);
     }
 
     apply_syntax_for_doc(&doc_tab, state.editor_dark);
@@ -2122,7 +2278,7 @@ fn save_document_at(
         doc_tab
             .doc
             .update_after_save(encoding, doc_tab.doc.eol, stamp);
-        doc_tab.doc.large_file_mode = is_large_file_size(
+        doc_tab.doc.large_file_mode = document::is_large_file_size(
             state.ui_settings.large_file_threshold_mb,
             doc_tab
                 .doc
@@ -2136,10 +2292,17 @@ fn save_document_at(
         } else {
             Some(count_words(&text))
         };
-        doc_tab.wrap_enabled = doc_tab.wrap_enabled && !doc_tab.doc.large_file_mode;
-        scintilla::set_wrap_enabled(doc_tab.editor, doc_tab.wrap_enabled);
+        scintilla::set_wrap_enabled(
+            doc_tab.editor,
+            effective_wrap_enabled(
+                doc_tab.wrap_enabled,
+                doc_tab.doc.large_file_mode,
+                state.ui_settings.large_file_disable_word_wrap,
+            ),
+        );
         apply_syntax_for_doc(doc_tab, state.editor_dark);
         scintilla::set_savepoint(doc_tab.editor);
+        doc_tab.sticky_dirty = false;
         doc_tab.doc.is_dirty = false;
         doc_tab.change_counter = doc_tab.change_counter.saturating_add(1);
         doc_tab.last_backup_change_counter = None;
@@ -2185,7 +2348,12 @@ fn check_external_change(hwnd: HWND, state: &mut AppState) -> Result<()> {
                     Some(doc_tab) => doc_tab,
                     None => return Ok(()),
                 };
-                load_file_into_doc(doc_tab, &path, state.ui_settings.large_file_threshold_mb)?;
+                load_file_into_doc(
+                    doc_tab,
+                    &path,
+                    state.ui_settings.large_file_threshold_mb,
+                    state.ui_settings.large_file_disable_word_wrap,
+                )?;
                 apply_syntax_for_doc(doc_tab, state.editor_dark);
             }
             apply_large_file_mode_restrictions(hwnd, state, index);
@@ -2266,6 +2434,12 @@ fn update_status(state: &AppState) {
             flags.push_str("Too many matches");
         }
     }
+    if let Some(message) = state.status_message.as_deref() {
+        if !flags.is_empty() {
+            flags.push_str(" | ");
+        }
+        flags.push_str(message);
+    }
 
     set_status_part_text(state.status, 0, &format!("Ln {line}, Col {col}"));
     set_status_part_text(state.status, 1, &format!("Sel {sel_len}"));
@@ -2309,6 +2483,14 @@ fn set_status_part_text(status: HWND, part: usize, text: &str) {
             LPARAM(text.as_ptr() as isize),
         );
     }
+}
+
+fn set_status_message(state: &mut AppState, message: impl Into<String>) {
+    state.status_message = Some(message.into());
+}
+
+fn clear_status_message(state: &mut AppState) {
+    state.status_message = None;
 }
 
 fn schedule_word_count(hwnd: HWND, state: &mut AppState) {
@@ -2420,6 +2602,87 @@ fn trim_leading_and_trailing_whitespace(editor: HWND) {
     scintilla::end_undo_action(editor);
 }
 
+fn toggle_checkboxes(editor: HWND) {
+    apply_checkbox_command(editor, toggle_checkbox_line);
+}
+
+fn insert_checkboxes(editor: HWND) {
+    apply_checkbox_command(editor, insert_checkbox_line);
+}
+
+fn apply_checkbox_command(editor: HWND, transform: impl Fn(&str) -> Option<String>) {
+    let Some((start_line, end_line)) = checkbox_target_lines(editor) else {
+        return;
+    };
+
+    scintilla::begin_undo_action(editor);
+    for line in (start_line..=end_line).rev() {
+        apply_checkbox_command_to_line(editor, line, &transform);
+    }
+    scintilla::end_undo_action(editor);
+}
+
+fn checkbox_target_lines(editor: HWND) -> Option<(usize, usize)> {
+    let line_count = scintilla::line_count(editor);
+    if line_count == 0 {
+        return None;
+    }
+
+    let sel_start = scintilla::selection_start(editor);
+    let sel_end = scintilla::selection_end(editor);
+    if sel_start == sel_end {
+        let current_line =
+            scintilla::line_from_position(editor, scintilla::get_current_pos(editor));
+        return Some((current_line, current_line));
+    }
+
+    let (start_pos, end_pos) = if sel_start <= sel_end {
+        (sel_start, sel_end)
+    } else {
+        (sel_end, sel_start)
+    };
+    let start_line = scintilla::line_from_position(editor, start_pos);
+    let mut end_line = scintilla::line_from_position(editor, end_pos);
+    if end_pos > start_pos {
+        let line_start = scintilla::position_from_line(editor, end_line);
+        if end_pos == line_start && end_line > start_line {
+            end_line = end_line.saturating_sub(1);
+        }
+    }
+    Some((start_line, end_line))
+}
+
+fn apply_checkbox_command_to_line(
+    editor: HWND,
+    line: usize,
+    transform: &impl Fn(&str) -> Option<String>,
+) {
+    let line_start = scintilla::position_from_line(editor, line);
+    let line_end = scintilla::line_end_position(editor, line);
+    let line_text = editor_line_text(editor, line_start, line_end);
+    let Some(updated) = transform(&line_text) else {
+        return;
+    };
+    if updated == line_text {
+        return;
+    }
+
+    scintilla::set_target_range(editor, line_start, line_end);
+    scintilla::replace_target(editor, &updated);
+}
+
+fn editor_line_text(editor: HWND, start: usize, end: usize) -> String {
+    if end <= start {
+        return String::new();
+    }
+
+    let mut raw = Vec::with_capacity(end - start);
+    for pos in start..end {
+        raw.push(scintilla::char_at(editor, pos));
+    }
+    String::from_utf8_lossy(&raw).into_owned()
+}
+
 fn trim_line_whitespace(editor: HWND, line: usize) {
     let line_start = scintilla::position_from_line(editor, line);
     let line_end = scintilla::line_end_position(editor, line);
@@ -2460,28 +2723,29 @@ fn copy_path_to_clipboard(hwnd: HWND, state: &AppState, kind: CopyPathKind) -> R
     Ok(())
 }
 
-fn show_find_dialog(hwnd: HWND, state: &mut AppState, find_only: bool) -> Result<()> {
+fn show_find_dialog(hwnd: HWND, state: &mut AppState, mode: SearchDialogMode) -> Result<()> {
+    if active_editor(state).is_none() {
+        return Ok(());
+    }
+    state.search_dialog_mode = mode;
+    seed_search_text_from_selection(state);
     if let Some(dialog) = &state.find_dialog {
         unsafe {
             ShowWindow(dialog.hwnd, SW_SHOW);
+            let _ = SetFocus(dialog.find_edit);
         }
-        apply_find_state_to_dialog(state)?;
+        apply_search_state_to_dialog(state)?;
         return Ok(());
     }
 
     let instance = module_instance()?;
-    let title = if find_only {
-        w!("Find")
-    } else {
-        w!("Find / Replace")
-    };
     let width = scale_for_dpi(hwnd, 460);
     let height = scale_for_dpi(hwnd, 240);
     let hwnd_dialog = unsafe {
         CreateWindowExW(
             Default::default(),
             FIND_CLASS,
-            title,
+            search_dialog_title(mode),
             WS_OVERLAPPEDWINDOW | WS_VISIBLE,
             CW_USEDEFAULT,
             CW_USEDEFAULT,
@@ -2499,6 +2763,32 @@ fn show_find_dialog(hwnd: HWND, state: &mut AppState, find_only: bool) -> Result
     }
 
     Ok(())
+}
+
+fn search_dialog_title(mode: SearchDialogMode) -> PCWSTR {
+    match mode {
+        SearchDialogMode::Find => w!("Find"),
+        SearchDialogMode::Replace => w!("Replace"),
+    }
+}
+
+fn seed_search_text_from_selection(state: &mut AppState) {
+    if !state.search_state.find_text.is_empty() {
+        return;
+    }
+    let Some(editor) = active_editor(state) else {
+        return;
+    };
+    if scintilla::selection_empty(editor) {
+        return;
+    }
+    let Ok(selected_text) = scintilla::selected_text(editor) else {
+        return;
+    };
+    if selected_text.is_empty() || selected_text.contains('\r') || selected_text.contains('\n') {
+        return;
+    }
+    state.search_state.find_text = selected_text;
 }
 
 fn show_go_to_line_dialog(hwnd: HWND, state: &mut AppState) -> Result<()> {
@@ -2577,8 +2867,8 @@ fn confirm_go_to_line(main_hwnd: HWND, state: &mut AppState) -> Result<()> {
     };
     let line_count = scintilla::line_count(editor).max(1);
     let raw = get_window_text(dialog.line_edit)?;
-    let requested = raw.trim().parse::<usize>().unwrap_or(1);
-    let clamped = requested.clamp(1, line_count);
+    let requested = raw.trim().parse::<usize>().ok();
+    let clamped = clamp_line_number(requested, line_count);
     scintilla::goto_line(editor, clamped.saturating_sub(1));
     update_status(state);
     close_go_to_line_dialog(main_hwnd, state);
@@ -2587,9 +2877,10 @@ fn confirm_go_to_line(main_hwnd: HWND, state: &mut AppState) -> Result<()> {
 
 fn close_go_to_line_dialog(main_hwnd: HWND, state: &mut AppState) {
     if let Some(dialog) = state.go_to_line_dialog.take() {
+        let focus_target = active_editor(state).unwrap_or(main_hwnd);
         unsafe {
             EnableWindow(main_hwnd, BOOL(1));
-            let _ = SetFocus(main_hwnd);
+            let _ = SetFocus(focus_target);
             DestroyWindow(dialog.hwnd).ok();
         }
     }
@@ -2631,43 +2922,54 @@ fn show_find_in_files_dialog(hwnd: HWND, state: &mut AppState) -> Result<()> {
 }
 
 fn perform_find_next(hwnd: HWND, state: &mut AppState) -> Result<()> {
-    sync_find_state_from_dialog(state)?;
-    if state.find_state.find_text.is_empty() {
-        show_find_dialog(hwnd, state, true)?;
+    sync_search_state_from_dialog(state)?;
+    if state.search_state.find_text.is_empty() {
+        show_find_dialog(hwnd, state, SearchDialogMode::Find)?;
         return Ok(());
     }
-    state.find_state.last_direction = SearchDirection::Down;
+    state.search_state.last_direction = SearchDirection::Down;
     if let Some(editor) = active_editor(state) {
-        let _ = find_in_editor(editor, &state.find_state, SearchDirection::Down);
+        if find_in_editor(editor, &state.search_state, SearchDirection::Down) {
+            clear_status_message(state);
+        } else {
+            set_status_message(state, "Not found");
+        }
         update_status(state);
     }
     Ok(())
 }
 
 fn perform_find_prev(hwnd: HWND, state: &mut AppState) -> Result<()> {
-    sync_find_state_from_dialog(state)?;
-    if state.find_state.find_text.is_empty() {
-        show_find_dialog(hwnd, state, true)?;
+    sync_search_state_from_dialog(state)?;
+    if state.search_state.find_text.is_empty() {
+        show_find_dialog(hwnd, state, SearchDialogMode::Find)?;
         return Ok(());
     }
-    state.find_state.last_direction = SearchDirection::Up;
+    state.search_state.last_direction = SearchDirection::Up;
     if let Some(editor) = active_editor(state) {
-        let _ = find_in_editor(editor, &state.find_state, SearchDirection::Up);
+        if find_in_editor(editor, &state.search_state, SearchDirection::Up) {
+            clear_status_message(state);
+        } else {
+            set_status_message(state, "Not found");
+        }
         update_status(state);
     }
     Ok(())
 }
 
 fn perform_replace(hwnd: HWND, state: &mut AppState) -> Result<()> {
-    sync_find_state_from_dialog(state)?;
-    if state.find_state.find_text.is_empty() {
-        show_find_dialog(hwnd, state, false)?;
+    sync_search_state_from_dialog(state)?;
+    if state.search_state.find_text.is_empty() {
+        show_find_dialog(hwnd, state, SearchDialogMode::Replace)?;
         return Ok(());
     }
-    state.find_state.last_direction = SearchDirection::Down;
+    state.search_state.last_direction = SearchDirection::Down;
     if let Some(editor) = active_editor(state) {
-        if replace_in_editor(editor, &state.find_state) {
-            let _ = find_in_editor(editor, &state.find_state, SearchDirection::Down);
+        if replace_in_editor(editor, &state.search_state) {
+            clear_status_message(state);
+            let _ = find_in_editor(editor, &state.search_state, SearchDirection::Down);
+        } else {
+            set_status_message(state, "Not found");
         }
         update_status(state);
     }
@@ -2675,43 +2977,69 @@ fn perform_replace(hwnd: HWND, state: &mut AppState) -> Result<()> {
 }
 
 fn perform_replace_all(hwnd: HWND, state: &mut AppState) -> Result<()> {
-    sync_find_state_from_dialog(state)?;
-    if state.find_state.find_text.is_empty() {
-        show_find_dialog(hwnd, state, false)?;
+    sync_search_state_from_dialog(state)?;
+    if state.search_state.find_text.is_empty() {
+        show_find_dialog(hwnd, state, SearchDialogMode::Replace)?;
         return Ok(());
     }
     if let Some(editor) = active_editor(state) {
-        replace_all_in_editor(editor, &state.find_state);
+        if replace_all_in_editor(editor, &state.search_state) == 0 {
+            set_status_message(state, "Not found");
+        } else {
+            clear_status_message(state);
+        }
         update_status(state);
     }
     Ok(())
 }
 
-fn sync_find_state_from_dialog(state: &mut AppState) -> Result<()> {
+fn sync_search_state_from_dialog(state: &mut AppState) -> Result<()> {
     if let Some(dialog) = &state.find_dialog {
-        state.find_state.find_text = get_window_text(dialog.find_edit)?;
-        state.find_state.replace_text = get_window_text(dialog.replace_edit)?;
-        state.find_state.match_case = is_checked(dialog.match_case);
-        state.find_state.whole_word = is_checked(dialog.whole_word);
-        state.find_state.regex = is_checked(dialog.regex);
-        state.find_state.wrap = is_checked(dialog.wrap);
+        state.search_state.find_text = get_window_text(dialog.find_edit)?;
+        state.search_state.replace_text = get_window_text(dialog.replace_edit)?;
+        state.search_state.match_case = is_checked(dialog.match_case);
+        state.search_state.whole_word = is_checked(dialog.whole_word);
+        state.search_state.regex = is_checked(dialog.regex);
+        state.search_state.wrap = is_checked(dialog.wrap);
     }
     Ok(())
 }
 
-fn apply_find_state_to_dialog(state: &AppState) -> Result<()> {
+fn apply_search_state_to_dialog(state: &AppState) -> Result<()> {
     if let Some(dialog) = &state.find_dialog {
-        set_window_text(dialog.find_edit, &state.find_state.find_text);
-        set_window_text(dialog.replace_edit, &state.find_state.replace_text);
-        set_checked(dialog.match_case, state.find_state.match_case);
-        set_checked(dialog.whole_word, state.find_state.whole_word);
-        set_checked(dialog.regex, state.find_state.regex);
-        set_checked(dialog.wrap, state.find_state.wrap);
+        set_window_text(dialog.find_edit, &state.search_state.find_text);
+        set_window_text(dialog.replace_edit, &state.search_state.replace_text);
+        set_checked(dialog.match_case, state.search_state.match_case);
+        set_checked(dialog.whole_word, state.search_state.whole_word);
+        set_checked(dialog.regex, state.search_state.regex);
+        set_checked(dialog.wrap, state.search_state.wrap);
+        apply_search_dialog_mode(dialog, state.search_dialog_mode);
     }
     Ok(())
 }
 
-fn find_in_editor(editor: HWND, state: &FindState, direction: SearchDirection) -> bool {
+fn apply_search_dialog_mode(dialog: &FindDialogState, mode: SearchDialogMode) {
+    set_window_text(dialog.hwnd, search_dialog_title_text(mode));
+    let replace_visibility = match mode {
+        SearchDialogMode::Find => SW_HIDE,
+        SearchDialogMode::Replace => SW_SHOW,
+    };
+    unsafe {
+        ShowWindow(dialog.replace_label, replace_visibility);
+        ShowWindow(dialog.replace_edit, replace_visibility);
+        ShowWindow(dialog.replace_btn, replace_visibility);
+        ShowWindow(dialog.replace_all, replace_visibility);
+    }
+}
+
+fn search_dialog_title_text(mode: SearchDialogMode) -> &'static str {
+    match mode {
+        SearchDialogMode::Find => "Find",
+        SearchDialogMode::Replace => "Replace",
+    }
+}
+
+fn find_in_editor(editor: HWND, state: &SearchState, direction: SearchDirection) -> bool {
     let found = find_match(editor, state, direction);
     if let Some((start, end)) = found {
         scintilla::set_selection(editor, start, end);
@@ -2721,13 +3049,13 @@ fn find_in_editor(editor: HWND, state: &FindState, direction: SearchDirection) -
     }
 }
 
-fn replace_in_editor(editor: HWND, state: &FindState) -> bool {
+fn replace_in_editor(editor: HWND, state: &SearchState) -> bool {
     if state.find_text.is_empty() {
         return false;
     }
     let selection_start = scintilla::selection_start(editor);
     let selection_end = scintilla::selection_end(editor);
-    let current_matches = selection_matches_find(editor, state);
+    let current_matches = selection_matches_search(editor, state);
     let (match_start, match_end) = if current_matches {
         (selection_start, selection_end)
     } else {
@@ -2743,65 +3071,56 @@ fn replace_in_editor(editor: HWND, state: &FindState) -> bool {
     true
 }
 
-fn selection_matches_find(editor: HWND, state: &FindState) -> bool {
+fn selection_matches_search(editor: HWND, state: &SearchState) -> bool {
     let selection_start = scintilla::selection_start(editor);
     let selection_end = scintilla::selection_end(editor);
-    if selection_start == selection_end {
+    if selection_start == selection_end || state.find_text.is_empty() {
         return false;
     }
-    let selected = match scintilla::selected_text(editor) {
-        Ok(value) => value,
-        Err(_) => return false,
-    };
-    if state.regex {
-        let mut builder = RegexBuilder::new(&state.find_text);
-        builder.case_insensitive(!state.match_case);
-        let regex = match builder.build() {
-            Ok(value) => value,
-            Err(_) => return false,
-        };
-        return regex
-            .find(&selected)
-            .is_some_and(|matched| matched.start() == 0 && matched.end() == selected.len());
-    }
-    if state.match_case {
-        selected == state.find_text
-    } else {
-        selected.to_lowercase() == state.find_text.to_lowercase()
-    }
+    let flags = search_flags(state);
+    matches!(
+        scintilla::search_in_target(
+            editor,
+            &state.find_text,
+            flags,
+            selection_start,
+            selection_end,
+        ),
+        Some((match_start, match_end))
+            if match_start == selection_start && match_end == selection_end
+    )
 }
 
-fn replace_all_in_editor(editor: HWND, state: &FindState) {
+fn replace_all_in_editor(editor: HWND, state: &SearchState) -> usize {
     if state.find_text.is_empty() {
-        return;
+        return 0;
     }
     let flags = search_flags(state);
     let mut doc_len = scintilla::get_length(editor);
     let mut search_start = 0usize;
     let replacement_len = state.replace_text.len();
+    let mut replacements = 0usize;
     scintilla::begin_undo_action(editor);
     while let Some((start, end)) =
         scintilla::search_in_target(editor, &state.find_text, flags, search_start, doc_len)
     {
         scintilla::set_target_range(editor, start, end);
         scintilla::replace_target(editor, &state.replace_text);
-        let removed = end.saturating_sub(start);
-        if replacement_len >= removed {
-            doc_len = doc_len.saturating_add(replacement_len - removed);
-        } else {
-            doc_len = doc_len.saturating_sub(removed - replacement_len);
-        }
-        search_start = start.saturating_add(replacement_len);
+        replacements = replacements.saturating_add(1);
+        let progress = advance_replace_all_progress(doc_len, start, end, replacement_len);
+        doc_len = progress.next_doc_len;
+        search_start = progress.next_search_start;
         if search_start > doc_len {
             break;
         }
     }
     scintilla::end_undo_action(editor);
+    replacements
 }
 
 fn find_match(
     editor: HWND,
-    state: &FindState,
+    state: &SearchState,
     direction: SearchDirection,
 ) -> Option<(usize, usize)> {
     if state.find_text.is_empty() {
@@ -2812,51 +3131,87 @@ fn find_match(
     let caret = scintilla::get_current_pos(editor);
     let sel_start = scintilla::selection_start(editor);
     let sel_end = scintilla::selection_end(editor);
+    let search_plan = build_search_plan(direction, state.wrap, doc_len, caret, sel_start, sel_end);
+    search_in_search_range(editor, &state.find_text, flags, search_plan.primary).or_else(|| {
+        search_plan
+            .wrapped
+            .and_then(|range| search_in_search_range(editor, &state.find_text, flags, range))
+    })
+}
+
+fn search_in_search_range(
+    editor: HWND,
+    find_text: &str,
+    flags: usize,
+    range: SearchRange,
+) -> Option<(usize, usize)> {
+    if range.start == range.end {
+        return None;
+    }
+    scintilla::search_in_target(editor, find_text, flags, range.start, range.end)
+}
+
+fn build_search_plan(
+    direction: SearchDirection,
+    wrap: bool,
+    doc_len: usize,
+    caret: usize,
+    sel_start: usize,
+    sel_end: usize,
+) -> SearchPlan {
+    let anchor = match direction {
+        SearchDirection::Down if sel_start != sel_end => sel_end.min(doc_len),
+        SearchDirection::Up if sel_start != sel_end => sel_start.min(doc_len),
+        _ => caret.min(doc_len),
+    };
 
     match direction {
-        SearchDirection::Down => {
-            let primary_start = if sel_start != sel_end { sel_end } else { caret };
-            scintilla::search_in_target(editor, &state.find_text, flags, primary_start, doc_len)
-                .or_else(|| {
-                    if state.wrap {
-                        scintilla::search_in_target(
-                            editor,
-                            &state.find_text,
-                            flags,
-                            0,
-                            primary_start.min(doc_len),
-                        )
-                    } else {
-                        None
-                    }
-                })
-        }
-        SearchDirection::Up => {
-            let primary_start = if sel_start != sel_end {
-                sel_start
-            } else {
-                caret
-            };
-            scintilla::search_in_target(editor, &state.find_text, flags, primary_start, 0).or_else(
-                || {
-                    if state.wrap {
-                        scintilla::search_in_target(
-                            editor,
-                            &state.find_text,
-                            flags,
-                            doc_len,
-                            primary_start,
-                        )
-                    } else {
-                        None
-                    }
-                },
-            )
-        }
+        SearchDirection::Down => SearchPlan {
+            primary: SearchRange {
+                start: anchor,
+                end: doc_len,
+            },
+            wrapped: wrap.then_some(SearchRange {
+                start: 0,
+                end: anchor,
+            }),
+        },
+        SearchDirection::Up => SearchPlan {
+            primary: SearchRange {
+                start: anchor,
+                end: 0,
+            },
+            wrapped: wrap.then_some(SearchRange {
+                start: doc_len,
+                end: anchor,
+            }),
+        },
     }
 }
 
-fn search_flags(state: &FindState) -> usize {
+fn advance_replace_all_progress(
+    doc_len: usize,
+    start: usize,
+    end: usize,
+    replacement_len: usize,
+) -> ReplaceAllProgress {
+    let removed = end.saturating_sub(start);
+    let next_doc_len = if replacement_len >= removed {
+        doc_len.saturating_add(replacement_len - removed)
+    } else {
+        doc_len.saturating_sub(removed - replacement_len)
+    };
+    ReplaceAllProgress {
+        next_search_start: start.saturating_add(replacement_len),
+        next_doc_len,
+    }
+}
+
+fn clamp_line_number(requested: Option<usize>, line_count: usize) -> usize {
+    requested.unwrap_or(1).clamp(1, line_count.max(1))
+}
+
+fn search_flags(state: &SearchState) -> usize {
     let mut flags = 0;
     if state.match_case {
         flags |= SCFIND_MATCHCASE;
@@ -3289,6 +3644,13 @@ fn apply_editor_theme_overlays(editor: HWND, dark: bool) {
         outline_alpha,
     );
 
+    let strike_color = if dark {
+        color_ref(224, 156, 156).0
+    } else {
+        color_ref(155, 92, 92).0
+    };
+    scintilla::configure_strike_indicator(editor, STRIKE_INDIC, strike_color);
+
     let hidden_line_color = if dark {
         color_ref(114, 160, 230).0
     } else {
@@ -3331,7 +3693,9 @@ fn create_doc_from_path(
     parent: HWND,
     instance: HINSTANCE,
     path: PathBuf,
+    wrap_enabled: bool,
     large_file_threshold_mb: u32,
+    large_file_disable_word_wrap: bool,
 ) -> Result<DocTab> {
     let editor = create_editor(parent, instance)?;
     let mut doc = Document::new_empty();
@@ -3340,14 +3704,20 @@ fn create_doc_from_path(
         runtime_id: 0,
         editor,
         doc,
-        wrap_enabled: true,
+        wrap_enabled,
+        sticky_dirty: false,
         word_count: Some(0),
         change_counter: 0,
         last_backup_change_counter: None,
         smart_highlight_token: None,
         smart_highlight_truncated: false,
     };
-    load_file_into_doc(&mut doc_tab, &path, large_file_threshold_mb)?;
+    load_file_into_doc(
+        &mut doc_tab,
+        &path,
+        large_file_threshold_mb,
+        large_file_disable_word_wrap,
+    )?;
     Ok(doc_tab)
 }
 
@@ -3355,19 +3725,26 @@ fn load_file_into_doc(
     doc_tab: &mut DocTab,
     path: &PathBuf,
     large_file_threshold_mb: u32,
+    large_file_disable_word_wrap: bool,
 ) -> Result<()> {
     let bytes =
         std::fs::read(path).map_err(|err| AppError::new(format!("Failed to read file: {err}")))?;
     let (text, encoding) = document::decode_bytes(&bytes)?;
     let eol = document::detect_eol(&text);
     let stamp = document::FileStamp::from_path(path)?;
-    let large_file_mode = is_large_file_size(large_file_threshold_mb, stamp.size);
+    let large_file_mode = document::is_large_file_size(large_file_threshold_mb, stamp.size);
 
     scintilla::set_text(doc_tab.editor, &text)?;
     scintilla::set_eol_mode(doc_tab.editor, eol);
 
-    doc_tab.wrap_enabled = doc_tab.wrap_enabled && !large_file_mode;
-    scintilla::set_wrap_enabled(doc_tab.editor, doc_tab.wrap_enabled);
+    scintilla::set_wrap_enabled(
+        doc_tab.editor,
+        effective_wrap_enabled(
+            doc_tab.wrap_enabled,
+            large_file_mode,
+            large_file_disable_word_wrap,
+        ),
+    );
     scintilla::set_savepoint(doc_tab.editor);
 
     doc_tab
@@ -3379,6 +3756,7 @@ fn load_file_into_doc(
         .unwrap_or("Untitled")
         .to_string();
     doc_tab.doc.is_dirty = false;
+    doc_tab.sticky_dirty = false;
     doc_tab.doc.first_backup_write = None;
     doc_tab.doc.last_backup_write = None;
     doc_tab.change_counter = 0;
@@ -3401,6 +3779,7 @@ fn create_empty_tab(hwnd: HWND, instance: HINSTANCE, state: &mut AppState) -> Re
         editor,
         doc,
         wrap_enabled: state.word_wrap_enabled,
+        sticky_dirty: false,
         word_count: Some(0),
         change_counter: 0,
         last_backup_change_counter: None,
@@ -3424,14 +3803,23 @@ fn duplicate_active_tab(hwnd: HWND, state: &mut AppState) -> Result<()> {
         .get(state.active)
         .ok_or_else(|| AppError::new("No active document."))?;
     let text = scintilla::get_text(source.editor)?;
+    let strike_ranges = collect_strike_ranges(source.editor);
     let instance = module_instance()?;
     let editor = create_editor(hwnd, instance)?;
     scintilla::set_text(editor, &text)?;
     scintilla::set_eol_mode(editor, source.doc.eol);
+    let encoded_size = document::encoded_size_for_text(&text, source.doc.encoding);
     let large_file_mode =
-        is_large_file_size(state.ui_settings.large_file_threshold_mb, text.len() as u64);
-    let wrap_enabled = state.word_wrap_enabled && !large_file_mode;
-    scintilla::set_wrap_enabled(editor, wrap_enabled);
+        document::is_large_file_size(state.ui_settings.large_file_threshold_mb, encoded_size);
+    let wrap_enabled = state.word_wrap_enabled;
+    scintilla::set_wrap_enabled(
+        editor,
+        effective_wrap_enabled(
+            wrap_enabled,
+            large_file_mode,
+            state.ui_settings.large_file_disable_word_wrap,
+        ),
+    );
 
     let mut doc = Document::new_empty();
     doc.encoding = source.doc.encoding;
@@ -3446,6 +3834,7 @@ fn duplicate_active_tab(hwnd: HWND, state: &mut AppState) -> Result<()> {
         editor,
         doc,
         wrap_enabled,
+        sticky_dirty: true,
         word_count: if large_file_mode {
             None
         } else {
@@ -3456,8 +3845,8 @@ fn duplicate_active_tab(hwnd: HWND, state: &mut AppState) -> Result<()> {
         smart_highlight_token: None,
         smart_highlight_truncated: false,
     };
-    let lexer = lexer_for_doc(&source.doc);
-    scintilla::apply_lexer(doc_tab.editor, lexer, state.editor_dark);
+    apply_syntax_for_doc(&doc_tab, state.editor_dark);
+    restore_strike_ranges(doc_tab.editor, &strike_ranges);
 
     let index = add_tab(state, &tab_title(&doc_tab), doc_tab)?;
     select_tab(hwnd, state, index);
@@ -3640,6 +4029,7 @@ fn select_tab(hwnd: HWND, state: &mut AppState, index: usize) {
             SetFocus(doc_tab.editor);
         }
     }
+    clear_status_message(state);
     update_smart_highlight_for_doc(state, index, true);
 
     update_title(hwnd, state);
@@ -3662,10 +4052,14 @@ fn select_adjacent_tab(hwnd: HWND, state: &mut AppState, next: bool) {
     select_tab(hwnd, state, index);
 }
 
-fn hide_selected_or_current_lines(editor: HWND) {
+fn ordered_selection_range(editor: HWND) -> (usize, usize) {
     let a = scintilla::selection_start(editor);
     let b = scintilla::selection_end(editor);
-    let (start_pos, end_pos) = if a <= b { (a, b) } else { (b, a) };
+    if a <= b { (a, b) } else { (b, a) }
+}
+
+fn hide_selected_or_current_lines(editor: HWND) {
+    let (start_pos, end_pos) = ordered_selection_range(editor);
     let line_start = scintilla::line_from_position(editor, start_pos);
     let line_end = if start_pos == end_pos {
         line_start
@@ -3683,17 +4077,94 @@ fn show_all_lines(editor: HWND) {
     scintilla::show_lines(editor, 0, lines - 1);
 }
 
+fn toggle_strikethrough(editor: HWND) -> bool {
+    let (start, end) = ordered_selection_range(editor);
+    if start >= end {
+        return false;
+    }
+
+    scintilla::set_indicator_current(editor, STRIKE_INDIC);
+    scintilla::set_indicator_value(editor, STRIKE_INDIC_VALUE);
+    if selection_fully_struck(editor, start, end) {
+        scintilla::clear_indicator_range(editor, start, end - start);
+    } else {
+        scintilla::fill_indicator_range(editor, start, end - start);
+    }
+    true
+}
+
+fn selection_fully_struck(editor: HWND, start: usize, end: usize) -> bool {
+    let mut pos = start;
+    while pos < end {
+        if scintilla::indicator_value_at(editor, STRIKE_INDIC, pos) <= 0 {
+            return false;
+        }
+        let run_end = scintilla::indicator_end(editor, STRIKE_INDIC, pos).min(end);
+        if run_end <= pos {
+            return false;
+        }
+        pos = run_end;
+    }
+    true
+}
+
+fn collect_strike_ranges(editor: HWND) -> Vec<session::StrikeRange> {
+    let len = scintilla::get_length(editor);
+    let mut pos = 0usize;
+    let mut ranges = Vec::new();
+    while pos < len {
+        let flags = scintilla::indicator_all_on_for(editor, pos);
+        let next = scintilla::indicator_end(editor, STRIKE_INDIC, pos).min(len);
+        if (flags & (1u32 << STRIKE_INDIC)) != 0 {
+            let start = scintilla::indicator_start(editor, STRIKE_INDIC, pos).min(pos);
+            let end = next.max(pos.saturating_add(1));
+            if end > start {
+                ranges.push(session::StrikeRange {
+                    start: start as i64,
+                    end: end as i64,
+                });
+            }
+        }
+        pos = next.max(pos.saturating_add(1));
+    }
+    ranges
+}
+
+fn restore_strike_ranges(editor: HWND, ranges: &[session::StrikeRange]) {
+    let len = scintilla::get_length(editor);
+    if len == 0 || ranges.is_empty() {
+        return;
+    }
+
+    scintilla::set_indicator_current(editor, STRIKE_INDIC);
+    scintilla::set_indicator_value(editor, STRIKE_INDIC_VALUE);
+    scintilla::clear_indicator_range(editor, 0, len);
+    for range in ranges {
+        let start = range.start.max(0) as usize;
+        let end = range.end.max(0) as usize;
+        let start = start.min(len);
+        let end = end.min(len);
+        if end > start {
+            scintilla::fill_indicator_range(editor, start, end - start);
+        }
+    }
+}
+
 fn update_smart_highlight_for_doc(state: &mut AppState, index: usize, force: bool) {
     if index >= state.docs.len() {
         return;
     }
     let smart_enabled = state.ui_settings.smart_highlight_enabled;
-    let allow_large = state.ui_settings.large_file_allow_smart_highlight;
+    let disable_for_large = state.ui_settings.large_file_disable_smart_highlight;
     let match_case = state.ui_settings.smart_highlight_match_case;
     let whole_word = state.ui_settings.smart_highlight_whole_word;
 
     let doc_tab = &mut state.docs[index];
-    if !smart_enabled || (doc_tab.doc.large_file_mode && !allow_large) {
+    if !smart_highlight_allowed(
+        smart_enabled,
+        doc_tab.doc.large_file_mode,
+        disable_for_large,
+    ) {
         clear_smart_highlight(doc_tab);
         return;
     }
@@ -3837,13 +4308,14 @@ fn doc_index_by_runtime_id(state: &AppState, runtime_id: LPARAM) -> Option<usize
 }
 
 fn set_dirty(state: &mut AppState, index: usize, dirty: bool) {
-    if let Some(doc_tab) = state.docs.get_mut(index)
-        && doc_tab.doc.is_dirty != dirty
-    {
-        doc_tab.doc.is_dirty = dirty;
-        update_tab_text(state, index);
-        if index == state.active {
-            update_status(state);
+    if let Some(doc_tab) = state.docs.get_mut(index) {
+        let effective_dirty = dirty || doc_tab.sticky_dirty;
+        if doc_tab.doc.is_dirty != effective_dirty {
+            doc_tab.doc.is_dirty = effective_dirty;
+            update_tab_text(state, index);
+            if index == state.active {
+                update_status(state);
+            }
         }
     }
 }
@@ -4053,12 +4525,11 @@ fn restore_session_entry(
         .path
         .as_ref()
         .and_then(|path| session::modified_time(path).ok());
-    let prefer_backup_for_dirty =
-        state.remember_session && state.session_snapshot_periodic_backup && entry.is_dirty;
     let restore_source = session::decide_restore_source(&session::RestoreDecisionInput {
+        remember_session: state.remember_session,
         path: entry.path.clone(),
         backup_path: entry.backup_path.clone(),
-        is_dirty: prefer_backup_for_dirty,
+        was_dirty_at_exit: entry.is_dirty,
         backup_modified,
         disk_modified,
     });
@@ -4076,7 +4547,8 @@ fn restore_session_entry(
                 .map_err(|err| AppError::new(format!("Failed to read restore path: {err}")))?;
             let (text, encoding) = document::decode_bytes(&bytes)?;
             let stamp = document::FileStamp::from_path(path)?;
-            let large = is_large_file_size(state.ui_settings.large_file_threshold_mb, stamp.size);
+            let large =
+                document::is_large_file_size(state.ui_settings.large_file_threshold_mb, stamp.size);
             (text, encoding, Some(stamp), large)
         }
         session::RestoreSource::Backup => {
@@ -4094,10 +4566,16 @@ fn restore_session_entry(
             let large = stamp
                 .as_ref()
                 .map(|value| {
-                    is_large_file_size(state.ui_settings.large_file_threshold_mb, value.size)
+                    document::is_large_file_size(
+                        state.ui_settings.large_file_threshold_mb,
+                        value.size,
+                    )
                 })
                 .unwrap_or_else(|| {
-                    is_large_file_size(state.ui_settings.large_file_threshold_mb, text.len() as u64)
+                    document::is_large_file_size(
+                        state.ui_settings.large_file_threshold_mb,
+                        bytes.len() as u64,
+                    )
                 });
             (text, TextEncoding::Utf8, stamp, large)
         }
@@ -4134,7 +4612,14 @@ fn restore_session_entry(
 
     let wrap_enabled = state.word_wrap_enabled;
     scintilla::set_eol_mode(editor, doc.eol);
-    scintilla::set_wrap_enabled(editor, wrap_enabled && !doc.large_file_mode);
+    scintilla::set_wrap_enabled(
+        editor,
+        effective_wrap_enabled(
+            wrap_enabled,
+            doc.large_file_mode,
+            state.ui_settings.large_file_disable_word_wrap,
+        ),
+    );
     scintilla::set_savepoint(editor);
 
     let doc_tab = DocTab {
@@ -4142,6 +4627,7 @@ fn restore_session_entry(
         editor,
         doc,
         wrap_enabled,
+        sticky_dirty: restore_source == session::RestoreSource::Backup && entry.is_dirty,
         word_count: if large_file_mode {
             None
         } else {
@@ -4160,14 +4646,10 @@ fn restore_session_entry(
         update_next_untitled_index_from_name(state, &doc_tab.doc.display_name);
     }
     apply_syntax_for_doc(&doc_tab, state.editor_dark);
+    restore_strike_ranges(editor, &entry.strike_ranges);
     let index = add_tab(state, &tab_title(&doc_tab), doc_tab)?;
     if entry.cursor_pos >= 0 {
         scintilla::goto_pos(state.docs[index].editor, entry.cursor_pos as usize);
-    }
-    if state.docs[index].doc.large_file_mode
-        && state.ui_settings.large_file_disable_word_wrap_globally
-    {
-        disable_word_wrap_globally_in_state(state);
     }
     Ok(())
 }
@@ -4205,6 +4687,7 @@ fn save_session_checkpoint(state: &AppState) -> Result<()> {
                 .stamp
                 .as_ref()
                 .map(|stamp| session::unix_timestamp(stamp.modified)),
+            strike_ranges: collect_strike_ranges(doc_tab.editor),
         });
     }
 
@@ -4402,9 +4885,20 @@ fn get_state(hwnd: HWND) -> Option<&'static mut AppState> {
     }
 }
 
-fn is_large_file_size(threshold_mb: u32, size_bytes: u64) -> bool {
-    let bytes = (threshold_mb as u64).saturating_mul(1024 * 1024);
-    size_bytes >= bytes
+fn effective_wrap_enabled(
+    wrap_enabled: bool,
+    large_file_mode: bool,
+    large_file_disable_word_wrap: bool,
+) -> bool {
+    wrap_enabled && !(large_file_mode && large_file_disable_word_wrap)
+}
+
+fn smart_highlight_allowed(
+    smart_highlight_enabled: bool,
+    large_file_mode: bool,
+    large_file_disable_smart_highlight: bool,
+) -> bool {
+    smart_highlight_enabled && !(large_file_mode && large_file_disable_smart_highlight)
 }
 
 fn clamp_vertical_tab_width(state: &AppState, desired: i32, client_width: i32) -> i32 {
@@ -4468,6 +4962,22 @@ fn context_menu_position(lparam: LPARAM) -> (i32, i32) {
     } else {
         (lparam_x(lparam), lparam_y(lparam))
     }
+}
+
+fn keyboard_tab_context_menu_target(state: &AppState, source: HWND) -> Option<(usize, i32, i32)> {
+    if source != state.tab_host.top_tabs && source != state.tab_host.vertical_tabs {
+        return None;
+    }
+    if state.docs.is_empty() || state.active >= state.docs.len() {
+        return None;
+    }
+
+    let mut point = POINT::default();
+    if unsafe { GetCursorPos(&mut point) }.is_err() {
+        point.x = 0;
+        point.y = 0;
+    }
+    Some((state.active, point.x, point.y))
 }
 
 fn top_tab_hit_test_at_cursor(tabs: HWND) -> Option<(usize, i32, i32)> {
@@ -4666,6 +5176,24 @@ fn show_editor_context_menu(hwnd: HWND, editor: HWND, x: i32, y: i32) -> Option<
             CMD_TRIM_LEADING_TRAILING as usize,
             w!("Trim Leading + Trailing Whitespace"),
         );
+        let _ = AppendMenuW(
+            menu,
+            MF_STRING,
+            CMD_TOGGLE_CHECKBOX as usize,
+            w!("Toggle Checkbox"),
+        );
+        let _ = AppendMenuW(
+            menu,
+            MF_STRING,
+            CMD_INSERT_CHECKBOX as usize,
+            w!("Place Checkbox"),
+        );
+        let _ = AppendMenuW(
+            menu,
+            MF_STRING,
+            IDM_EDIT_TOGGLE_STRIKETHROUGH as usize,
+            w!("Toggle Strikethrough"),
+        );
         let has_selection = !scintilla::selection_empty(editor);
         let sel_start = scintilla::selection_start(editor) as i64;
         let sel_end = scintilla::selection_end(editor) as i64;
@@ -4699,6 +5227,16 @@ fn show_editor_context_menu(hwnd: HWND, editor: HWND, x: i32, y: i32) -> Option<
         } else {
             MF_BYCOMMAND | MF_GRAYED
         };
+        let strike_flags = if has_selection {
+            MF_BYCOMMAND | MF_ENABLED
+        } else {
+            MF_BYCOMMAND | MF_GRAYED
+        };
+        let checkbox_flags = if has_selection {
+            MF_BYCOMMAND | MF_ENABLED
+        } else {
+            MF_BYCOMMAND | MF_GRAYED
+        };
         let _ = EnableMenuItem(menu, IDM_EDIT_UNDO as u32, undo_flags);
         let _ = EnableMenuItem(menu, IDM_EDIT_REDO as u32, redo_flags);
         let _ = EnableMenuItem(menu, IDM_EDIT_CUT as u32, cut_copy_delete_flags);
@@ -4707,6 +5245,9 @@ fn show_editor_context_menu(hwnd: HWND, editor: HWND, x: i32, y: i32) -> Option<
         let _ = EnableMenuItem(menu, IDM_EDIT_PASTE as u32, paste_flags);
         let _ = EnableMenuItem(menu, CMD_TRANSFORM_UPPERCASE as u32, upper_flags);
         let _ = EnableMenuItem(menu, CMD_TRANSFORM_LOWERCASE as u32, lower_flags);
+        let _ = EnableMenuItem(menu, CMD_TOGGLE_CHECKBOX as u32, checkbox_flags);
+        let _ = EnableMenuItem(menu, CMD_INSERT_CHECKBOX as u32, checkbox_flags);
+        let _ = EnableMenuItem(menu, IDM_EDIT_TOGGLE_STRIKETHROUGH as u32, strike_flags);
     }
     let selected = unsafe {
         TrackPopupMenu(
@@ -4826,8 +5367,14 @@ fn set_word_wrap(hwnd: HWND, state: &mut AppState, enabled: bool) {
     state.word_wrap_enabled = enabled;
     for doc_tab in &mut state.docs {
         doc_tab.wrap_enabled = enabled;
-        let apply = enabled && !doc_tab.doc.large_file_mode;
-        scintilla::set_wrap_enabled(doc_tab.editor, apply);
+        scintilla::set_wrap_enabled(
+            doc_tab.editor,
+            effective_wrap_enabled(
+                enabled,
+                doc_tab.doc.large_file_mode,
+                state.ui_settings.large_file_disable_word_wrap,
+            ),
+        );
     }
     update_wrap_menu(hwnd, state);
     if let Err(err) = save_session_checkpoint(state) {
@@ -4835,35 +5382,31 @@ fn set_word_wrap(hwnd: HWND, state: &mut AppState, enabled: bool) {
     }
 }
 
-fn disable_word_wrap_globally_in_state(state: &mut AppState) {
-    state.word_wrap_enabled = false;
-    for doc_tab in &mut state.docs {
-        doc_tab.wrap_enabled = false;
-        scintilla::set_wrap_enabled(doc_tab.editor, false);
-    }
-}
-
 fn apply_large_file_mode_restrictions(hwnd: HWND, state: &mut AppState, index: usize) {
+    let mut should_refresh_smart_highlight = false;
     let Some(doc_tab) = state.docs.get_mut(index) else {
         return;
     };
-    if !doc_tab.doc.large_file_mode {
-        return;
-    }
 
-    if !state.ui_settings.large_file_allow_smart_highlight {
+    scintilla::set_wrap_enabled(
+        doc_tab.editor,
+        effective_wrap_enabled(
+            doc_tab.wrap_enabled,
+            doc_tab.doc.large_file_mode,
+            state.ui_settings.large_file_disable_word_wrap,
+        ),
+    );
+
+    if doc_tab.doc.large_file_mode && state.ui_settings.large_file_disable_smart_highlight {
         clear_smart_highlight(doc_tab);
+    } else if index == state.active {
+        should_refresh_smart_highlight = true;
     }
 
-    if state.ui_settings.large_file_disable_word_wrap_globally && state.word_wrap_enabled {
-        disable_word_wrap_globally_in_state(state);
-        update_wrap_menu(hwnd, state);
-        if let Err(err) = save_session_checkpoint(state) {
-            logging::log_error(&format!(
-                "session_save_after_large_file_wrap_disable_failed err={err}"
-            ));
-        }
+    if should_refresh_smart_highlight {
+        update_smart_highlight_for_doc(state, index, true);
     }
+    update_wrap_menu(hwnd, state);
 }
 
 fn set_always_on_top(hwnd: HWND, state: &mut AppState, enabled: bool) {
@@ -4910,7 +5453,6 @@ fn update_editor_dark_menu(hwnd: HWND, enabled: bool) {
 
 fn update_tab_host_theme(state: &mut AppState, dark: bool) -> Result<()> {
     let theme = tab_theme(dark);
-    let _ = theme.border;
     let brush = unsafe { CreateSolidBrush(theme.bg) };
     if brush.0 == 0 {
         return Err(AppError::win32("CreateSolidBrush(VerticalTabs)"));
@@ -4941,6 +5483,8 @@ fn update_tab_host_theme(state: &mut AppState, dark: bool) -> Result<()> {
             WPARAM(0),
             LPARAM(theme.fg.0 as isize),
         );
+        InvalidateRect(state.tab_host.vertical_tabs, None, true);
+        InvalidateRect(state.tab_host.splitter, None, true);
     }
     Ok(())
 }
@@ -5025,6 +5569,17 @@ fn set_menu_check(menu: HMENU, id: u16, checked: bool) {
     }
 }
 
+fn finish_splitter_resize(state: &mut AppState) {
+    if !state.tab_host.resizing {
+        return;
+    }
+    state.tab_host.resizing = false;
+    unsafe {
+        InvalidateRect(state.tab_host.splitter, None, true);
+    }
+    persist_ui_settings(state);
+}
+
 unsafe extern "system" fn splitter_wndproc(
     hwnd: HWND,
     msg: u32,
@@ -5046,6 +5601,7 @@ unsafe extern "system" fn splitter_wndproc(
                 state.tab_host.resizing = true;
                 unsafe {
                     let _ = SetCapture(hwnd);
+                    InvalidateRect(hwnd, None, true);
                 }
             }
             LRESULT(0)
@@ -5082,10 +5638,46 @@ unsafe extern "system" fn splitter_wndproc(
             let parent = unsafe { GetParent(hwnd) };
             if parent.0 != 0
                 && let Some(state) = get_state(parent)
-                && state.tab_host.resizing
             {
-                state.tab_host.resizing = false;
-                persist_ui_settings(state);
+                finish_splitter_resize(state);
+            }
+            LRESULT(0)
+        }
+        WM_CAPTURECHANGED => {
+            let parent = unsafe { GetParent(hwnd) };
+            if parent.0 != 0
+                && let Some(state) = get_state(parent)
+            {
+                finish_splitter_resize(state);
+            }
+            LRESULT(0)
+        }
+        WM_PAINT => {
+            let parent = unsafe { GetParent(hwnd) };
+            let color = if parent.0 != 0 {
+                get_state(parent)
+                    .map(|state| {
+                        if state.tab_host.resizing {
+                            state.tab_host.theme.selection_bg
+                        } else {
+                            state.tab_host.theme.border
+                        }
+                    })
+                    .unwrap_or(color_ref(160, 160, 160))
+            } else {
+                color_ref(160, 160, 160)
+            };
+            let mut paint = PAINTSTRUCT::default();
+            let hdc = unsafe { BeginPaint(hwnd, &mut paint) };
+            let brush = unsafe { CreateSolidBrush(color) };
+            if brush.0 != 0 {
+                unsafe {
+                    let _ = FillRect(hdc, &paint.rcPaint, brush);
+                    let _ = DeleteObject(brush);
+                }
+            }
+            unsafe {
+                let _ = EndPaint(hwnd, &paint);
             }
             LRESULT(0)
         }
@@ -5249,7 +5841,7 @@ unsafe extern "system" fn find_wndproc(
                 let wrap = CreateWindowExW(
                     Default::default(),
                     w!("Button"),
-                    w!("Wrap"),
+                    w!("Wrap around"),
                     check_style,
                     scale(330),
                     scale(70),
@@ -5376,13 +5968,19 @@ unsafe extern "system" fn find_wndproc(
                 state.find_dialog = Some(FindDialogState {
                     hwnd,
                     find_edit,
+                    replace_label,
                     replace_edit,
                     match_case,
                     whole_word,
                     regex,
                     wrap,
+                    replace_btn,
+                    replace_all,
                 });
-                let _ = apply_find_state_to_dialog(state);
+                let _ = apply_search_state_to_dialog(state);
+                unsafe {
+                    let _ = SetFocus(find_edit);
+                }
             }
             LRESULT(0)
         }
@@ -6010,6 +6608,18 @@ mod tests {
         }
     }
 
+    fn make_search_state() -> SearchState {
+        SearchState {
+            find_text: "needle".to_string(),
+            replace_text: "swap".to_string(),
+            match_case: false,
+            whole_word: false,
+            regex: false,
+            wrap: true,
+            last_direction: SearchDirection::Down,
+        }
+    }
+
     #[test]
     fn tab_layout_cycles() {
         assert_eq!(TabPlacement::Top.next(), TabPlacement::Left);
@@ -6093,9 +6703,25 @@ mod tests {
 
     #[test]
     fn large_file_size_uses_threshold_mb() {
-        assert!(is_large_file_size(1, 1_048_576));
-        assert!(!is_large_file_size(1, 1_048_575));
-        assert!(is_large_file_size(20, 20 * 1_048_576));
+        assert!(document::is_large_file_size(1, 1_048_576));
+        assert!(!document::is_large_file_size(1, 1_048_575));
+        assert!(document::is_large_file_size(20, 20 * 1_048_576));
+    }
+
+    #[test]
+    fn effective_wrap_respects_large_file_gating() {
+        assert!(effective_wrap_enabled(true, false, true));
+        assert!(effective_wrap_enabled(true, true, false));
+        assert!(!effective_wrap_enabled(true, true, true));
+        assert!(!effective_wrap_enabled(false, false, false));
+    }
+
+    #[test]
+    fn smart_highlight_respects_large_file_gating() {
+        assert!(smart_highlight_allowed(true, false, true));
+        assert!(smart_highlight_allowed(true, true, false));
+        assert!(!smart_highlight_allowed(true, true, true));
+        assert!(!smart_highlight_allowed(false, false, false));
     }
 
     #[test]
@@ -6105,5 +6731,97 @@ mod tests {
         assert!(!is_word_like_token("alpha-beta"));
         assert!(!is_word_like_token("alpha beta"));
         assert!(!is_word_like_token(""));
+    }
+
+    #[test]
+    fn about_details_include_requested_fields() {
+        let details = AboutDetails {
+            version: "0.4.3",
+            git_sha: "0123456789abcdef",
+            build_utc: "2026-03-22T12:34:56Z",
+            source_url: "https://github.com/mgelsinger/rivetnotes",
+            data_dir: PathBuf::from("C:\\Users\\test\\AppData\\Local\\Rivet"),
+        };
+
+        let rendered = format_about_details(&details);
+
+        assert!(rendered.contains("Rivet 0.4.3"));
+        assert!(rendered.contains("Commit: 0123456789ab"));
+        assert!(rendered.contains("Build UTC: 2026-03-22T12:34:56Z"));
+        assert!(rendered.contains("Source link: https://github.com/mgelsinger/rivetnotes"));
+        assert!(rendered.contains("Data dir: C:\\Users\\test\\AppData\\Local\\Rivet"));
+    }
+
+    #[test]
+    fn search_flags_include_requested_options() {
+        let mut state = make_search_state();
+        state.match_case = true;
+        state.whole_word = true;
+        assert_eq!(search_flags(&state), SCFIND_MATCHCASE | SCFIND_WHOLEWORD);
+
+        state.regex = true;
+        assert_eq!(
+            search_flags(&state),
+            SCFIND_MATCHCASE | SCFIND_WHOLEWORD | SCFIND_REGEXP
+        );
+    }
+
+    #[test]
+    fn build_search_plan_uses_selection_end_for_find_next_and_wrap() {
+        let plan = build_search_plan(SearchDirection::Down, true, 120, 12, 20, 28);
+        assert_eq!(
+            plan,
+            SearchPlan {
+                primary: SearchRange {
+                    start: 28,
+                    end: 120
+                },
+                wrapped: Some(SearchRange { start: 0, end: 28 }),
+            }
+        );
+    }
+
+    #[test]
+    fn build_search_plan_uses_selection_start_for_find_prev_and_wrap() {
+        let plan = build_search_plan(SearchDirection::Up, true, 120, 60, 20, 28);
+        assert_eq!(
+            plan,
+            SearchPlan {
+                primary: SearchRange { start: 20, end: 0 },
+                wrapped: Some(SearchRange {
+                    start: 120,
+                    end: 20
+                }),
+            }
+        );
+    }
+
+    #[test]
+    fn advance_replace_all_progress_updates_document_length() {
+        let progress = advance_replace_all_progress(20, 5, 9, 2);
+        assert_eq!(
+            progress,
+            ReplaceAllProgress {
+                next_search_start: 7,
+                next_doc_len: 18,
+            }
+        );
+
+        let progress = advance_replace_all_progress(20, 5, 7, 6);
+        assert_eq!(
+            progress,
+            ReplaceAllProgress {
+                next_search_start: 11,
+                next_doc_len: 24,
+            }
+        );
+    }
+
+    #[test]
+    fn clamp_line_number_defaults_and_bounds() {
+        assert_eq!(clamp_line_number(None, 50), 1);
+        assert_eq!(clamp_line_number(Some(0), 50), 1);
+        assert_eq!(clamp_line_number(Some(20), 50), 20);
+        assert_eq!(clamp_line_number(Some(99), 50), 50);
     }
 }
