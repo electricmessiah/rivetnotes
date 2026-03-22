@@ -1,0 +1,15 @@
+Rivet bundles third-party source from the projects listed below.
+
+- Scintilla
+  Upstream: https://www.scintilla.org/
+  Source tree: third_party/scintilla
+  Notice file: Scintilla.txt
+- Lexilla
+  Upstream: https://www.scintilla.org/Lexilla.html
+  Source tree: third_party/lexilla
+  Notice file: Lexilla.txt
+
+Release packaging copies this entire directory into both:
+
+- the portable zip produced by scripts/package.ps1
+- the installer produced by installer/rivet.iss

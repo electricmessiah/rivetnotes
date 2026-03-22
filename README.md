@@ -112,4 +112,5 @@ See `CONTRIBUTING.md` for contribution rules and workflow.
 
 MIT. See `LICENSE`.
 
-Third-party notices: `NOTICE.txt` and `THIRD_PARTY_NOTICES/`.
+Third-party notices: `NOTICE.txt` plus `THIRD_PARTY_NOTICES/NOTICE.txt`,
+`THIRD_PARTY_NOTICES/Scintilla.txt`, and `THIRD_PARTY_NOTICES/Lexilla.txt`.

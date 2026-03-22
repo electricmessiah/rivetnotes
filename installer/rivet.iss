@@ -40,6 +40,7 @@ Source: "..\\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\\NOTICE.txt"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\\README.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\\CHANGELOG.md"; DestDir: "{app}"; Flags: ignoreversion
+; Copy the full notices directory so each bundled third-party component ships with its own notice file.
 Source: "..\\THIRD_PARTY_NOTICES\\*"; DestDir: "{app}\\THIRD_PARTY_NOTICES"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]

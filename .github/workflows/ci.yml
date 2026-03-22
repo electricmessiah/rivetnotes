@@ -9,6 +9,7 @@ on:
 
 jobs:
   check-format:
+    name: cargo fmt --check
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -21,6 +22,7 @@ jobs:
         run: cargo fmt --check
 
   clippy:
+    name: cargo clippy -- -D warnings
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -33,6 +35,7 @@ jobs:
         run: cargo clippy -- -D warnings
 
   test:
+    name: cargo test
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -44,6 +47,7 @@ jobs:
         run: cargo test
 
   audit:
+    name: RustSec audit
     runs-on: ubuntu-latest
     continue-on-error: true
     steps:

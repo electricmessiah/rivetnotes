@@ -35,4 +35,9 @@ if (-not (Test-Path $exePath)) {
 }
 
 $issPath = Join-Path $repoRoot "installer\rivet.iss"
+$noticesDir = Join-Path $repoRoot "THIRD_PARTY_NOTICES"
+if (-not (Test-Path $noticesDir)) {
+    throw "Missing THIRD_PARTY_NOTICES directory: $noticesDir"
+}
+
 & $IsccPath "/DMyAppVersion=$version" "/DMyAppExe=$exePath" $issPath

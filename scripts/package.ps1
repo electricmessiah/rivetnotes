@@ -28,6 +28,14 @@ if (-not (Test-Path $exePath)) {
 $distDir = Join-Path $repoRoot $OutDir
 New-Item -ItemType Directory -Force -Path $distDir | Out-Null
 
+$noticesDir = Join-Path $repoRoot "THIRD_PARTY_NOTICES"
+if (-not (Test-Path $noticesDir)) {
+    throw "Missing THIRD_PARTY_NOTICES directory: $noticesDir"
+}
+if (-not (Get-ChildItem -Path $noticesDir -Recurse -File | Select-Object -First 1)) {
+    throw "THIRD_PARTY_NOTICES is empty: $noticesDir"
+}
+
 $stagingName = "rivet-$version-win64-portable"
 $stagingDir = Join-Path $distDir $stagingName
 if (Test-Path $stagingDir) {
@@ -44,7 +52,7 @@ if (Test-Path "CHANGELOG.md") {
 }
 Copy-Item (Join-Path $scriptDir "install.ps1") (Join-Path $stagingDir "install.ps1") -Force
 Copy-Item (Join-Path $scriptDir "uninstall.ps1") (Join-Path $stagingDir "uninstall.ps1") -Force
-Copy-Item "THIRD_PARTY_NOTICES" (Join-Path $stagingDir "THIRD_PARTY_NOTICES") -Recurse -Force
+Copy-Item $noticesDir (Join-Path $stagingDir "THIRD_PARTY_NOTICES") -Recurse -Force
 
 $zipPath = Join-Path $distDir "$stagingName.zip"
 if (Test-Path $zipPath) {

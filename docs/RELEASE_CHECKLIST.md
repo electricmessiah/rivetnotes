@@ -11,8 +11,10 @@
 
 - Run `powershell -ExecutionPolicy Bypass -File scripts/package.ps1`.
 - Verify `dist` contains portable zip and `checksums.txt`.
+- Verify the portable staging directory and zip contain `THIRD_PARTY_NOTICES/NOTICE.txt`, `THIRD_PARTY_NOTICES/Scintilla.txt`, and `THIRD_PARTY_NOTICES/Lexilla.txt`.
 - Run `powershell -ExecutionPolicy Bypass -File scripts/build-installer.ps1`.
 - Verify `dist` contains the installer `rivet-<version>-setup.exe`.
+- Installer packaging includes `THIRD_PARTY_NOTICES\*` through [`installer/rivet.iss`](../installer/rivet.iss), and portable packaging copies the same directory in [`scripts/package.ps1`](../scripts/package.ps1).
 - Test installer per-user and system-wide (elevation prompt).
 - Test `scripts/install.ps1` and `scripts/uninstall.ps1` on Windows 10/11.
 
@@ -27,5 +29,5 @@
 ## Release
 
 - Attach portable zip and checksums to the release.
-- Verify `NOTICE.txt` and `THIRD_PARTY_NOTICES/` are present in both portable zip and installer.
+- Verify `NOTICE.txt` and the full `THIRD_PARTY_NOTICES/` directory are present in both portable zip and installer.
 - Publish release notes based on `CHANGELOG.md`.

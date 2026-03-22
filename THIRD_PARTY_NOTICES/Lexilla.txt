@@ -1,3 +1,9 @@
+Lexilla notice for Rivet
+========================
+
+Rivet bundles Lexilla source code from `third_party/lexilla`.
+Upstream project: https://www.scintilla.org/Lexilla.html
+
 License for Lexilla, Scintilla, and SciTE
 
 Copyright 1998-2021 by Neil Hodgson <neilh@scintilla.org>

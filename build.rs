@@ -1,4 +1,5 @@
-use std::path::PathBuf;
+use std::fs;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use time::OffsetDateTime;
@@ -170,8 +171,8 @@ fn emit_build_metadata() {
     let version = std::env::var("CARGO_PKG_VERSION").unwrap_or_else(|_| "unknown".to_string());
     println!("cargo:rustc-env=RIVET_VERSION={version}");
 
-    println!("cargo:rerun-if-changed=.git/HEAD");
-    let git_sha = git_output(["rev-parse", "--short", "HEAD"]).unwrap_or_else(|| "unknown".into());
+    emit_git_rerun_instructions();
+    let git_sha = git_output(["rev-parse", "HEAD"]).unwrap_or_else(|| "unknown".into());
     println!("cargo:rustc-env=RIVET_GIT_SHA={git_sha}");
 
     let build_utc = OffsetDateTime::now_utc()
@@ -186,6 +187,47 @@ fn emit_build_metadata() {
         .map(|value| normalize_git_url(&value))
         .unwrap_or_else(|| "unknown".to_string());
     println!("cargo:rustc-env=RIVET_SOURCE_URL={source_url}");
+}
+
+fn emit_git_rerun_instructions() {
+    println!("cargo:rerun-if-changed=.git");
+
+    let Some(git_dir) = resolve_git_dir(Path::new(".git")) else {
+        return;
+    };
+
+    let head_path = git_dir.join("HEAD");
+    println!("cargo:rerun-if-changed={}", head_path.display());
+
+    let packed_refs = git_dir.join("packed-refs");
+    println!("cargo:rerun-if-changed={}", packed_refs.display());
+
+    let Ok(head_contents) = fs::read_to_string(&head_path) else {
+        return;
+    };
+    let Some(reference) = head_contents.trim().strip_prefix("ref: ") else {
+        return;
+    };
+
+    println!(
+        "cargo:rerun-if-changed={}",
+        git_dir.join(reference).display()
+    );
+}
+
+fn resolve_git_dir(dot_git: &Path) -> Option<PathBuf> {
+    if dot_git.is_dir() {
+        return Some(dot_git.to_path_buf());
+    }
+
+    let contents = fs::read_to_string(dot_git).ok()?;
+    let git_dir = contents.trim().strip_prefix("gitdir: ")?;
+    let git_dir = Path::new(git_dir);
+    if git_dir.is_absolute() {
+        Some(git_dir.to_path_buf())
+    } else {
+        Some(dot_git.parent().unwrap_or(Path::new(".")).join(git_dir))
+    }
 }
 
 fn git_output<const N: usize>(args: [&str; N]) -> Option<String> {
