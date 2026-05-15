@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::io::BufRead;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -10,8 +11,10 @@ use windows::Win32::Foundation::{
     POINT, WPARAM,
 };
 use windows::Win32::Graphics::Gdi::{
-    BeginPaint, CreateSolidBrush, DeleteObject, EndPaint, FillRect, HBRUSH, InvalidateRect,
-    PAINTSTRUCT, ScreenToClient,
+    BeginPaint, CreatePen, CreateSolidBrush, DT_END_ELLIPSIS, DT_NOPREFIX, DT_SINGLELINE,
+    DT_VCENTER, DeleteObject, DrawTextW, EndPaint, FillRect, HBRUSH, HDC, HGDIOBJ, InvalidateRect,
+    LineTo, MoveToEx, PAINTSTRUCT, PS_SOLID, ScreenToClient, SelectObject, SetBkMode, SetTextColor,
+    TRANSPARENT,
 };
 use windows::Win32::System::Com::CoTaskMemFree;
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
@@ -20,17 +23,18 @@ use windows::Win32::UI::Controls::Dialogs::{
     OFN_OVERWRITEPROMPT, OFN_PATHMUSTEXIST, OPENFILENAMEW,
 };
 use windows::Win32::UI::Controls::{
-    CDDS_ITEMPREPAINT, CDDS_PREPAINT, CDIS_HOT, CDIS_SELECTED, CDRF_DODEFAULT, CDRF_NEWFONT,
-    CDRF_NOTIFYITEMDRAW, ICC_LISTVIEW_CLASSES, ICC_WIN95_CLASSES, INITCOMMONCONTROLSEX,
-    InitCommonControlsEx, LIST_VIEW_ITEM_STATE_FLAGS, LVCF_WIDTH, LVCOLUMNW, LVHITTESTINFO,
-    LVIF_PARAM, LVIF_TEXT, LVIS_FOCUSED, LVIS_SELECTED, LVITEMW, LVM_DELETEALLITEMS, LVM_HITTEST,
-    LVM_INSERTCOLUMNW, LVM_INSERTITEMW, LVM_SETBKCOLOR, LVM_SETCOLUMNWIDTH,
-    LVM_SETEXTENDEDLISTVIEWSTYLE, LVM_SETITEMSTATE, LVM_SETTEXTBKCOLOR, LVM_SETTEXTCOLOR,
-    LVN_ITEMCHANGED, LVS_EX_DOUBLEBUFFER, LVS_EX_FULLROWSELECT, LVS_NOCOLUMNHEADER, LVS_REPORT,
-    LVS_SHOWSELALWAYS, LVS_SINGLESEL, NM_CUSTOMDRAW, NM_RCLICK, NMHDR, NMLISTVIEW, NMLVCUSTOMDRAW,
+    CDDS_ITEMPOSTPAINT, CDDS_ITEMPREPAINT, CDDS_PREPAINT, CDIS_HOT, CDIS_SELECTED, CDRF_DODEFAULT,
+    CDRF_NEWFONT, CDRF_NOTIFYITEMDRAW, CDRF_NOTIFYPOSTPAINT, DRAWITEMSTRUCT, ICC_LISTVIEW_CLASSES,
+    ICC_WIN95_CLASSES, INITCOMMONCONTROLSEX, InitCommonControlsEx, LIST_VIEW_ITEM_STATE_FLAGS,
+    LVCF_WIDTH, LVCOLUMNW, LVHITTESTINFO, LVIF_PARAM, LVIF_TEXT, LVIS_FOCUSED, LVIS_SELECTED,
+    LVITEMW, LVM_DELETEALLITEMS, LVM_GETITEMRECT, LVM_HITTEST, LVM_INSERTCOLUMNW, LVM_INSERTITEMW,
+    LVM_SETBKCOLOR, LVM_SETCOLUMNWIDTH, LVM_SETEXTENDEDLISTVIEWSTYLE, LVM_SETITEMSTATE,
+    LVM_SETTEXTBKCOLOR, LVM_SETTEXTCOLOR, LVN_ITEMCHANGED, LVS_EX_DOUBLEBUFFER,
+    LVS_EX_FULLROWSELECT, LVS_NOCOLUMNHEADER, LVS_REPORT, LVS_SHOWSELALWAYS, LVS_SINGLESEL,
+    NM_CUSTOMDRAW, NM_RCLICK, NMHDR, NMLISTVIEW, NMLVCUSTOMDRAW, ODS_HOTLIGHT, ODS_SELECTED,
     SB_SETPARTS, SB_SETTEXTW, STATUSCLASSNAMEW, TCHITTESTINFO, TCIF_TEXT, TCITEMW, TCM_DELETEITEM,
     TCM_GETCURSEL, TCM_GETITEMRECT, TCM_HITTEST, TCM_INSERTITEMW, TCM_SETCURSEL, TCM_SETITEMW,
-    TCN_SELCHANGE, WC_LISTVIEWW, WC_TABCONTROLW,
+    TCN_SELCHANGE, TCS_OWNERDRAWFIXED, WC_LISTVIEWW, WC_TABCONTROLW,
 };
 use windows::Win32::UI::HiDpi::{
     DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, GetDpiForWindow, SetProcessDpiAwarenessContext,
@@ -58,11 +62,11 @@ use windows::Win32::UI::WindowsAndMessaging::{
     SendMessageW, SetClassLongPtrW, SetCursor, SetTimer, SetWindowLongPtrW, SetWindowPos,
     SetWindowTextW, ShowWindow, TPM_NONOTIFY, TPM_RETURNCMD, TPM_RIGHTBUTTON, TrackPopupMenu,
     TranslateAcceleratorW, TranslateMessage, WINDOW_STYLE, WM_ACTIVATEAPP, WM_CAPTURECHANGED,
-    WM_CLOSE, WM_COMMAND, WM_CONTEXTMENU, WM_CREATE, WM_DESTROY, WM_DROPFILES, WM_GETICON,
-    WM_INITMENUPOPUP, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONUP, WM_MOUSEMOVE, WM_NCDESTROY,
-    WM_NOTIFY, WM_PAINT, WM_SETCURSOR, WM_SETICON, WM_SIZE, WM_TIMER, WNDCLASSEXW, WS_BORDER,
-    WS_CAPTION, WS_CHILD, WS_CLIPSIBLINGS, WS_OVERLAPPEDWINDOW, WS_SYSMENU, WS_TABSTOP, WS_VISIBLE,
-    WS_VSCROLL,
+    WM_CLOSE, WM_COMMAND, WM_CONTEXTMENU, WM_CREATE, WM_DESTROY, WM_DRAWITEM, WM_DROPFILES,
+    WM_GETICON, WM_INITMENUPOPUP, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONUP, WM_MOUSEMOVE,
+    WM_NCDESTROY, WM_NOTIFY, WM_PAINT, WM_SETCURSOR, WM_SETICON, WM_SIZE, WM_TIMER, WNDCLASSEXW,
+    WS_BORDER, WS_CAPTION, WS_CHILD, WS_CLIPSIBLINGS, WS_OVERLAPPEDWINDOW, WS_SYSMENU, WS_TABSTOP,
+    WS_VISIBLE, WS_VSCROLL,
 };
 use windows::core::PWSTR;
 use windows::core::{HSTRING, PCWSTR, w};
@@ -80,8 +84,10 @@ use crate::error::{AppError, Result};
 use crate::logging;
 use crate::platform::clipboard::{Clipboard, WinClipboard};
 use crate::textops::checkbox::{insert_checkbox_line, toggle_checkbox_line};
+use crate::textops::markdown_strike;
 use crate::textops::trim::{trim_edges_spaces_tabs, trim_line_preserve_eol};
 use regex::RegexBuilder;
+use uuid::Uuid;
 
 const IDM_FILE_NEW: u16 = 99;
 const IDM_FILE_OPEN: u16 = 100;
@@ -106,7 +112,7 @@ const IDM_EDIT_OUTDENT: u16 = 311;
 const CMD_TRIM_LEADING_TRAILING: u16 = 312;
 const CMD_TOGGLE_CHECKBOX: u16 = 313;
 const CMD_INSERT_CHECKBOX: u16 = 314;
-const IDM_EDIT_TOGGLE_STRIKETHROUGH: u16 = 315;
+const CMD_EDITOR_STRIKEOUT: u16 = 315;
 const IDM_EDIT_FIND: u16 = 320;
 const IDM_EDIT_FIND_NEXT: u16 = 321;
 const IDM_EDIT_FIND_PREV: u16 = 322;
@@ -141,13 +147,15 @@ const IDM_HELP_ABOUT: u16 = 400;
 const TIMER_SESSION_ID: usize = 1;
 const TIMER_FIND_RESULTS: usize = 2;
 const TIMER_WORD_COUNT: usize = 3;
+const TIMER_MD_STRIKE: usize = 4;
 const WORD_COUNT_INTERVAL_MS: u32 = 250;
+const MD_STRIKE_INTERVAL_MS: u32 = 250;
 const TAB_SPLITTER_WIDTH: i32 = 4;
 const SMART_HL_INDIC: usize = 8;
-const STRIKE_INDIC: usize = 9;
-const STRIKE_INDIC_VALUE: i32 = 1;
+const MD_STRIKE_INDIC: usize = 10;
 const SMART_HL_MAX_TOKEN_LEN: usize = 128;
 const SMART_HL_MAX_MATCHES: usize = 5000;
+const MD_STRIKE_MAX_MATCHES: usize = 10_000;
 
 const SCN_SAVEPOINTREACHED: u32 = 2002;
 const SCN_SAVEPOINTLEFT: u32 = 2003;
@@ -235,6 +243,7 @@ struct DocTab {
     last_backup_change_counter: Option<u64>,
     smart_highlight_token: Option<String>,
     smart_highlight_truncated: bool,
+    md_strike_truncated: bool,
 }
 
 struct SearchState {
@@ -353,6 +362,9 @@ struct TabStripHost {
     resizing: bool,
     drag_start_x_screen: i32,
     drag_start_width: i32,
+    hot_tab: Option<usize>,
+    hot_close: bool,
+    hot_in_top: bool,
 }
 
 impl TabStripHost {
@@ -374,6 +386,8 @@ struct AppState {
     icon_small: HICON,
     word_count_pending: bool,
     word_count_timer: bool,
+    md_strike_pending: HashSet<Uuid>,
+    md_strike_timer: bool,
     remember_session: bool,
     session_snapshot_periodic_backup: bool,
     backup_interval_seconds: u32,
@@ -723,8 +737,8 @@ fn create_menu() -> Result<HMENU> {
         AppendMenuW(
             edit_menu,
             MF_STRING,
-            IDM_EDIT_TOGGLE_STRIKETHROUGH as usize,
-            w!("Toggle Strikethrough"),
+            CMD_EDITOR_STRIKEOUT as usize,
+            w!("Strikeout"),
         )?;
         AppendMenuW(edit_menu, MF_SEPARATOR, 0, PCWSTR::null())?;
         AppendMenuW(
@@ -1007,6 +1021,11 @@ fn create_accelerators() -> Result<HACCEL> {
             cmd: CMD_TRIM_LEADING_TRAILING,
         },
         ACCEL {
+            fVirt: FVIRTKEY | FCONTROL,
+            key: VK_S,
+            cmd: IDM_FILE_SAVE,
+        },
+        ACCEL {
             fVirt: FVIRTKEY | FCONTROL | FSHIFT,
             key: VK_S,
             cmd: IDM_FILE_SAVE_ALL,
@@ -1079,6 +1098,19 @@ fn message_loop(hwnd: HWND, accel: HACCEL) -> Result<()> {
                 show_error("Rivet error", &err.to_string());
             }
             continue;
+        }
+        if message.message == WM_LBUTTONDOWN
+            && let Some(state) = get_state(hwnd)
+            && (message.hwnd == state.tab_host.top_tabs
+                || message.hwnd == state.tab_host.vertical_tabs)
+        {
+            let (x, y) = lparam_xy(message.lParam);
+            if let Some((index, TabHitArea::Close)) = hit_test_tab_at(state, message.hwnd, x, y) {
+                if let Err(err) = close_tab(hwnd, state, index) {
+                    show_error("Rivet error", &err.to_string());
+                }
+                continue;
+            }
         }
         unsafe {
             if TranslateAcceleratorW(hwnd, accel, &message) == 0 {
@@ -1391,18 +1423,21 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                     }
                     LRESULT(0)
                 }
-                IDM_EDIT_TOGGLE_STRIKETHROUGH => {
+                CMD_EDITOR_STRIKEOUT => {
                     if let Some(state) = get_state(hwnd) {
                         let index = state.active;
-                        let toggled = state
+                        let changed = state
                             .docs
                             .get_mut(index)
-                            .map(|doc_tab| self::toggle_strikethrough(doc_tab.editor))
+                            .map(|doc_tab| apply_markdown_strikeout(doc_tab.editor))
                             .unwrap_or(false);
-                        if toggled {
+                        if changed {
+                            if let Some(doc_tab) = state.docs.get_mut(index) {
+                                refresh_markdown_strike_for_doc(doc_tab);
+                            }
                             if let Err(err) = save_session_checkpoint(state) {
                                 logging::log_error(&format!(
-                                    "session_save_after_toggle_strikethrough_failed err={err}"
+                                    "session_save_after_strikeout_failed err={err}"
                                 ));
                             }
                             update_status(state);
@@ -1617,6 +1652,16 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                 _ => unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) },
             }
         }
+        WM_DRAWITEM => {
+            if let Some(state) = get_state(hwnd) {
+                let dis = unsafe { &*(lparam.0 as *const DRAWITEMSTRUCT) };
+                if dis.hwndItem == state.tab_host.top_tabs {
+                    draw_top_tab_item(state, dis);
+                    return LRESULT(1);
+                }
+            }
+            unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
+        }
         WM_NOTIFY => {
             let nmhdr = unsafe { &*(lparam.0 as *const NMHDR) };
             if nmhdr.hwndFrom != HWND(0) {
@@ -1715,6 +1760,9 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                             doc_tab.doc.cursor_pos =
                                 scintilla::get_current_pos(doc_tab.editor) as i64;
                         }
+                        if let Some(index) = doc_index_by_hwnd(state, nmhdr.hwndFrom) {
+                            schedule_md_strike_rehighlight(hwnd, state, index);
+                        }
                         if let Some(index) = doc_index_by_hwnd(state, nmhdr.hwndFrom)
                             && index == state.active
                         {
@@ -1743,6 +1791,10 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                 && let Some(state) = get_state(hwnd)
             {
                 handle_word_count_timer(hwnd, state);
+            } else if wparam.0 == TIMER_MD_STRIKE
+                && let Some(state) = get_state(hwnd)
+            {
+                handle_md_strike_timer(hwnd, state);
             }
             LRESULT(0)
         }
@@ -1786,6 +1838,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                 let _ = KillTimer(hwnd, TIMER_SESSION_ID);
                 let _ = KillTimer(hwnd, TIMER_FIND_RESULTS);
                 let _ = KillTimer(hwnd, TIMER_WORD_COUNT);
+                let _ = KillTimer(hwnd, TIMER_MD_STRIKE);
             }
             unsafe {
                 PostQuitMessage(0);
@@ -1822,7 +1875,7 @@ fn create_children(hwnd: HWND, instance: HINSTANCE) -> Result<AppState> {
             Default::default(),
             WC_TABCONTROLW,
             PCWSTR::null(),
-            WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS,
+            window_style(WS_CHILD.0 | WS_VISIBLE.0 | WS_CLIPSIBLINGS.0 | TCS_OWNERDRAWFIXED),
             0,
             0,
             0,
@@ -1947,6 +2000,9 @@ fn create_children(hwnd: HWND, instance: HINSTANCE) -> Result<AppState> {
             resizing: false,
             drag_start_x_screen: 0,
             drag_start_width: 0,
+            hot_tab: None,
+            hot_close: false,
+            hot_in_top: false,
         },
         ui_settings,
         status,
@@ -1959,6 +2015,8 @@ fn create_children(hwnd: HWND, instance: HINSTANCE) -> Result<AppState> {
         icon_small,
         word_count_pending: false,
         word_count_timer: false,
+        md_strike_pending: HashSet::new(),
+        md_strike_timer: false,
         remember_session: session::DEFAULT_REMEMBER_SESSION,
         session_snapshot_periodic_backup: session::DEFAULT_SESSION_SNAPSHOT_PERIODIC_BACKUP,
         backup_interval_seconds: session::DEFAULT_BACKUP_INTERVAL_SECONDS,
@@ -2190,7 +2248,7 @@ fn open_path_new_tab(
         scintilla::set_eol_mode(doc_tab.editor, eol);
     }
 
-    apply_syntax_for_doc(&doc_tab, state.editor_dark);
+    apply_syntax_for_doc(&mut doc_tab, state.editor_dark);
     let index = add_tab(state, &tab_title(&doc_tab), doc_tab)?;
     select_tab(hwnd, state, index);
     apply_large_file_mode_restrictions(hwnd, state, index);
@@ -2433,6 +2491,12 @@ fn update_status(state: &AppState) {
             }
             flags.push_str("Too many matches");
         }
+        if doc_tab.md_strike_truncated {
+            if !flags.is_empty() {
+                flags.push(' ');
+            }
+            flags.push_str("Too many strike matches");
+        }
     }
     if let Some(message) = state.status_message.as_deref() {
         if !flags.is_empty() {
@@ -2520,6 +2584,39 @@ fn handle_word_count_timer(hwnd: HWND, state: &mut AppState) {
             let _ = KillTimer(hwnd, TIMER_WORD_COUNT);
         }
         state.word_count_timer = false;
+    }
+}
+
+fn schedule_md_strike_rehighlight(hwnd: HWND, state: &mut AppState, index: usize) {
+    let Some(doc_id) = state.docs.get(index).map(|doc_tab| doc_tab.doc.id) else {
+        return;
+    };
+    state.md_strike_pending.insert(doc_id);
+    if !state.md_strike_timer {
+        unsafe {
+            let _ = SetTimer(hwnd, TIMER_MD_STRIKE, MD_STRIKE_INTERVAL_MS, None);
+        }
+        state.md_strike_timer = true;
+    }
+}
+
+fn handle_md_strike_timer(hwnd: HWND, state: &mut AppState) {
+    if !state.md_strike_pending.is_empty() {
+        let pending: Vec<Uuid> = state.md_strike_pending.drain().collect();
+        for doc_id in pending {
+            if let Some(index) = state.docs.iter().position(|doc| doc.doc.id == doc_id)
+                && let Some(doc_tab) = state.docs.get_mut(index)
+            {
+                refresh_markdown_strike_for_doc(doc_tab);
+            }
+        }
+        update_status(state);
+    }
+    if state.md_strike_timer && state.md_strike_pending.is_empty() {
+        unsafe {
+            let _ = KillTimer(hwnd, TIMER_MD_STRIKE);
+        }
+        state.md_strike_timer = false;
     }
 }
 
@@ -3624,10 +3721,11 @@ fn create_editor(parent: HWND, instance: HINSTANCE) -> Result<HWND> {
     Ok(editor)
 }
 
-fn apply_syntax_for_doc(doc_tab: &DocTab, dark: bool) {
+fn apply_syntax_for_doc(doc_tab: &mut DocTab, dark: bool) {
     let lexer = lexer_for_doc(&doc_tab.doc);
     scintilla::apply_lexer(doc_tab.editor, lexer, dark);
     apply_editor_theme_overlays(doc_tab.editor, dark);
+    refresh_markdown_strike_for_doc(doc_tab);
 }
 
 fn apply_editor_theme_overlays(editor: HWND, dark: bool) {
@@ -3649,7 +3747,7 @@ fn apply_editor_theme_overlays(editor: HWND, dark: bool) {
     } else {
         color_ref(155, 92, 92).0
     };
-    scintilla::configure_strike_indicator(editor, STRIKE_INDIC, strike_color);
+    scintilla::configure_strike_indicator(editor, MD_STRIKE_INDIC, strike_color);
 
     let hidden_line_color = if dark {
         color_ref(114, 160, 230).0
@@ -3711,6 +3809,7 @@ fn create_doc_from_path(
         last_backup_change_counter: None,
         smart_highlight_token: None,
         smart_highlight_truncated: false,
+        md_strike_truncated: false,
     };
     load_file_into_doc(
         &mut doc_tab,
@@ -3774,7 +3873,7 @@ fn create_empty_tab(hwnd: HWND, instance: HINSTANCE, state: &mut AppState) -> Re
     let mut doc = Document::new_empty();
     doc.display_name = next_untitled_name(state);
     doc.backup_path = session::backup_path_for_id(doc.id)?;
-    let doc_tab = DocTab {
+    let mut doc_tab = DocTab {
         runtime_id: 0,
         editor,
         doc,
@@ -3785,11 +3884,12 @@ fn create_empty_tab(hwnd: HWND, instance: HINSTANCE, state: &mut AppState) -> Re
         last_backup_change_counter: None,
         smart_highlight_token: None,
         smart_highlight_truncated: false,
+        md_strike_truncated: false,
     };
     scintilla::set_eol_mode(editor, doc_tab.doc.eol);
     scintilla::set_wrap_enabled(editor, state.word_wrap_enabled);
     scintilla::set_savepoint(editor);
-    apply_syntax_for_doc(&doc_tab, state.editor_dark);
+    apply_syntax_for_doc(&mut doc_tab, state.editor_dark);
 
     let index = add_tab(state, &tab_title(&doc_tab), doc_tab)?;
     select_tab(hwnd, state, index);
@@ -3803,7 +3903,6 @@ fn duplicate_active_tab(hwnd: HWND, state: &mut AppState) -> Result<()> {
         .get(state.active)
         .ok_or_else(|| AppError::new("No active document."))?;
     let text = scintilla::get_text(source.editor)?;
-    let strike_ranges = collect_strike_ranges(source.editor);
     let instance = module_instance()?;
     let editor = create_editor(hwnd, instance)?;
     scintilla::set_text(editor, &text)?;
@@ -3829,7 +3928,7 @@ fn duplicate_active_tab(hwnd: HWND, state: &mut AppState) -> Result<()> {
     doc.backup_path = session::backup_path_for_id(doc.id)?;
     doc.is_dirty = true;
 
-    let doc_tab = DocTab {
+    let mut doc_tab = DocTab {
         runtime_id: 0,
         editor,
         doc,
@@ -3844,9 +3943,9 @@ fn duplicate_active_tab(hwnd: HWND, state: &mut AppState) -> Result<()> {
         last_backup_change_counter: None,
         smart_highlight_token: None,
         smart_highlight_truncated: false,
+        md_strike_truncated: false,
     };
-    apply_syntax_for_doc(&doc_tab, state.editor_dark);
-    restore_strike_ranges(doc_tab.editor, &strike_ranges);
+    apply_syntax_for_doc(&mut doc_tab, state.editor_dark);
 
     let index = add_tab(state, &tab_title(&doc_tab), doc_tab)?;
     select_tab(hwnd, state, index);
@@ -4030,6 +4129,9 @@ fn select_tab(hwnd: HWND, state: &mut AppState, index: usize) {
         }
     }
     clear_status_message(state);
+    if let Some(doc_tab) = state.docs.get_mut(index) {
+        refresh_markdown_strike_for_doc(doc_tab);
+    }
     update_smart_highlight_for_doc(state, index, true);
 
     update_title(hwnd, state);
@@ -4077,76 +4179,78 @@ fn show_all_lines(editor: HWND) {
     scintilla::show_lines(editor, 0, lines - 1);
 }
 
-fn toggle_strikethrough(editor: HWND) -> bool {
+fn apply_markdown_strikeout(editor: HWND) -> bool {
     let (start, end) = ordered_selection_range(editor);
     if start >= end {
         return false;
     }
 
-    scintilla::set_indicator_current(editor, STRIKE_INDIC);
-    scintilla::set_indicator_value(editor, STRIKE_INDIC_VALUE);
-    if selection_fully_struck(editor, start, end) {
-        scintilla::clear_indicator_range(editor, start, end - start);
-    } else {
-        scintilla::fill_indicator_range(editor, start, end - start);
-    }
+    let selected = match scintilla::selected_text(editor) {
+        Ok(selected) => selected,
+        Err(_) => return false,
+    };
+
+    let mut replacement = String::with_capacity(selected.len() + 4);
+    replacement.push_str("~~");
+    replacement.push_str(&selected);
+    replacement.push_str("~~");
+
+    scintilla::begin_undo_action(editor);
+    scintilla::set_target_range(editor, start, end);
+    scintilla::replace_target(editor, &replacement);
+    scintilla::set_selection(editor, start + 2, end + 2);
+    scintilla::end_undo_action(editor);
     true
 }
 
-fn selection_fully_struck(editor: HWND, start: usize, end: usize) -> bool {
-    let mut pos = start;
-    while pos < end {
-        if scintilla::indicator_value_at(editor, STRIKE_INDIC, pos) <= 0 {
-            return false;
-        }
-        let run_end = scintilla::indicator_end(editor, STRIKE_INDIC, pos).min(end);
-        if run_end <= pos {
-            return false;
-        }
-        pos = run_end;
-    }
-    true
+fn clear_md_strike_indicators(editor: HWND, doc_len: usize) {
+    scintilla::set_indicator_current(editor, MD_STRIKE_INDIC);
+    scintilla::clear_indicator_range(editor, 0, doc_len);
 }
 
-fn collect_strike_ranges(editor: HWND) -> Vec<session::StrikeRange> {
-    let len = scintilla::get_length(editor);
-    let mut pos = 0usize;
-    let mut ranges = Vec::new();
-    while pos < len {
-        let flags = scintilla::indicator_all_on_for(editor, pos);
-        let next = scintilla::indicator_end(editor, STRIKE_INDIC, pos).min(len);
-        if (flags & (1u32 << STRIKE_INDIC)) != 0 {
-            let start = scintilla::indicator_start(editor, STRIKE_INDIC, pos).min(pos);
-            let end = next.max(pos.saturating_add(1));
-            if end > start {
-                ranges.push(session::StrikeRange {
-                    start: start as i64,
-                    end: end as i64,
-                });
-            }
-        }
-        pos = next.max(pos.saturating_add(1));
-    }
-    ranges
+fn fill_md_strike_range(editor: HWND, start: usize, len: usize) {
+    scintilla::set_indicator_current(editor, MD_STRIKE_INDIC);
+    scintilla::fill_indicator_range(editor, start, len);
 }
 
-fn restore_strike_ranges(editor: HWND, ranges: &[session::StrikeRange]) {
-    let len = scintilla::get_length(editor);
-    if len == 0 || ranges.is_empty() {
+fn refresh_markdown_strike_for_doc(doc_tab: &mut DocTab) {
+    let doc_len = scintilla::get_length(doc_tab.editor);
+    clear_md_strike_indicators(doc_tab.editor, doc_len);
+    doc_tab.md_strike_truncated = false;
+    if doc_tab.doc.large_file_mode || doc_len == 0 {
         return;
     }
 
-    scintilla::set_indicator_current(editor, STRIKE_INDIC);
-    scintilla::set_indicator_value(editor, STRIKE_INDIC_VALUE);
-    scintilla::clear_indicator_range(editor, 0, len);
-    for range in ranges {
-        let start = range.start.max(0) as usize;
-        let end = range.end.max(0) as usize;
-        let start = start.min(len);
-        let end = end.min(len);
-        if end > start {
-            scintilla::fill_indicator_range(editor, start, end - start);
+    let mut start = 0usize;
+    let mut count = 0usize;
+    while start < doc_len {
+        let Some((match_start, match_end)) = scintilla::search_in_target(
+            doc_tab.editor,
+            markdown_strike::SEARCH_PATTERN,
+            SCFIND_REGEXP,
+            start,
+            doc_len,
+        ) else {
+            break;
+        };
+
+        if match_end <= match_start {
+            break;
         }
+        if match_end - match_start >= 4 {
+            let inner_start = match_start + 2;
+            let inner_end = match_end - 2;
+            if inner_end > inner_start {
+                fill_md_strike_range(doc_tab.editor, inner_start, inner_end - inner_start);
+            }
+        }
+
+        count = count.saturating_add(1);
+        if count >= MD_STRIKE_MAX_MATCHES {
+            doc_tab.md_strike_truncated = true;
+            break;
+        }
+        start = match_end;
     }
 }
 
@@ -4622,7 +4726,7 @@ fn restore_session_entry(
     );
     scintilla::set_savepoint(editor);
 
-    let doc_tab = DocTab {
+    let mut doc_tab = DocTab {
         runtime_id: 0,
         editor,
         doc,
@@ -4641,12 +4745,12 @@ fn restore_session_entry(
         },
         smart_highlight_token: None,
         smart_highlight_truncated: false,
+        md_strike_truncated: false,
     };
     if doc_tab.doc.path.is_none() {
         update_next_untitled_index_from_name(state, &doc_tab.doc.display_name);
     }
-    apply_syntax_for_doc(&doc_tab, state.editor_dark);
-    restore_strike_ranges(editor, &entry.strike_ranges);
+    apply_syntax_for_doc(&mut doc_tab, state.editor_dark);
     let index = add_tab(state, &tab_title(&doc_tab), doc_tab)?;
     if entry.cursor_pos >= 0 {
         scintilla::goto_pos(state.docs[index].editor, entry.cursor_pos as usize);
@@ -4687,7 +4791,7 @@ fn save_session_checkpoint(state: &AppState) -> Result<()> {
                 .stamp
                 .as_ref()
                 .map(|stamp| session::unix_timestamp(stamp.modified)),
-            strike_ranges: collect_strike_ranges(doc_tab.editor),
+            strike_ranges: Vec::new(),
         });
     }
 
@@ -5173,6 +5277,12 @@ fn show_editor_context_menu(hwnd: HWND, editor: HWND, x: i32, y: i32) -> Option<
         let _ = AppendMenuW(
             menu,
             MF_STRING,
+            CMD_EDITOR_STRIKEOUT as usize,
+            w!("Strikeout"),
+        );
+        let _ = AppendMenuW(
+            menu,
+            MF_STRING,
             CMD_TRIM_LEADING_TRAILING as usize,
             w!("Trim Leading + Trailing Whitespace"),
         );
@@ -5187,12 +5297,6 @@ fn show_editor_context_menu(hwnd: HWND, editor: HWND, x: i32, y: i32) -> Option<
             MF_STRING,
             CMD_INSERT_CHECKBOX as usize,
             w!("Place Checkbox"),
-        );
-        let _ = AppendMenuW(
-            menu,
-            MF_STRING,
-            IDM_EDIT_TOGGLE_STRIKETHROUGH as usize,
-            w!("Toggle Strikethrough"),
         );
         let has_selection = !scintilla::selection_empty(editor);
         let sel_start = scintilla::selection_start(editor) as i64;
@@ -5247,7 +5351,7 @@ fn show_editor_context_menu(hwnd: HWND, editor: HWND, x: i32, y: i32) -> Option<
         let _ = EnableMenuItem(menu, CMD_TRANSFORM_LOWERCASE as u32, lower_flags);
         let _ = EnableMenuItem(menu, CMD_TOGGLE_CHECKBOX as u32, checkbox_flags);
         let _ = EnableMenuItem(menu, CMD_INSERT_CHECKBOX as u32, checkbox_flags);
-        let _ = EnableMenuItem(menu, IDM_EDIT_TOGGLE_STRIKETHROUGH as u32, strike_flags);
+        let _ = EnableMenuItem(menu, CMD_EDITOR_STRIKEOUT as u32, strike_flags);
     }
     let selected = unsafe {
         TrackPopupMenu(
@@ -5293,6 +5397,205 @@ fn persist_ui_settings(state: &AppState) {
     }
 }
 
+const TAB_CLOSE_BTN_SIZE: i32 = 14;
+const TAB_CLOSE_BTN_MARGIN: i32 = 6;
+
+fn tab_close_rect(
+    hwnd: HWND,
+    tab_rect: windows::Win32::Foundation::RECT,
+) -> windows::Win32::Foundation::RECT {
+    let size = scale_for_dpi(hwnd, TAB_CLOSE_BTN_SIZE);
+    let margin = scale_for_dpi(hwnd, TAB_CLOSE_BTN_MARGIN);
+    let height = tab_rect.bottom - tab_rect.top;
+    let top = tab_rect.top + (height - size).max(0) / 2;
+    windows::Win32::Foundation::RECT {
+        left: tab_rect.right - margin - size,
+        top,
+        right: tab_rect.right - margin,
+        bottom: top + size,
+    }
+}
+
+fn point_in_rect(rect: &windows::Win32::Foundation::RECT, x: i32, y: i32) -> bool {
+    x >= rect.left && x < rect.right && y >= rect.top && y < rect.bottom
+}
+
+fn lparam_xy(lparam: LPARAM) -> (i32, i32) {
+    let raw = lparam.0 as i32;
+    let x = (raw & 0xFFFF) as i16 as i32;
+    let y = ((raw >> 16) & 0xFFFF) as i16 as i32;
+    (x, y)
+}
+
+fn tab_rect_for_top(top_tabs: HWND, index: usize) -> Option<windows::Win32::Foundation::RECT> {
+    let mut rect = windows::Win32::Foundation::RECT::default();
+    let ok = unsafe {
+        SendMessageW(
+            top_tabs,
+            TCM_GETITEMRECT,
+            WPARAM(index),
+            LPARAM(&mut rect as *mut _ as isize),
+        )
+        .0
+    };
+    if ok == 0 { None } else { Some(rect) }
+}
+
+fn tab_rect_for_vertical(
+    vertical_tabs: HWND,
+    index: usize,
+) -> Option<windows::Win32::Foundation::RECT> {
+    // LVM_GETITEMRECT: input `left` selects which rect to return; 0 == LVIR_BOUNDS.
+    let mut rect = windows::Win32::Foundation::RECT {
+        left: 0,
+        top: 0,
+        right: 0,
+        bottom: 0,
+    };
+    let ok = unsafe {
+        SendMessageW(
+            vertical_tabs,
+            LVM_GETITEMRECT,
+            WPARAM(index),
+            LPARAM(&mut rect as *mut _ as isize),
+        )
+        .0
+    };
+    if ok == 0 { None } else { Some(rect) }
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+enum TabHitArea {
+    Body,
+    Close,
+}
+
+fn hit_test_tab_at(state: &AppState, control: HWND, x: i32, y: i32) -> Option<(usize, TabHitArea)> {
+    let count = state.docs.len();
+    let is_top = control == state.tab_host.top_tabs;
+    let is_vertical = control == state.tab_host.vertical_tabs;
+    if !is_top && !is_vertical {
+        return None;
+    }
+    for index in 0..count {
+        let rect = if is_top {
+            tab_rect_for_top(control, index)
+        } else {
+            tab_rect_for_vertical(control, index)
+        };
+        let Some(tab_rect) = rect else {
+            continue;
+        };
+        if !point_in_rect(&tab_rect, x, y) {
+            continue;
+        }
+        let close_rect = tab_close_rect(control, tab_rect);
+        if point_in_rect(&close_rect, x, y) {
+            return Some((index, TabHitArea::Close));
+        }
+        return Some((index, TabHitArea::Body));
+    }
+    None
+}
+
+fn draw_close_glyph(hdc: HDC, rect: windows::Win32::Foundation::RECT, fg: COLORREF, hot: bool) {
+    let (pen_color, bg_fill) = if hot {
+        (color_ref(255, 255, 255), Some(color_ref(232, 17, 35)))
+    } else {
+        (fg, None)
+    };
+    if let Some(bg) = bg_fill {
+        unsafe {
+            let brush = CreateSolidBrush(bg);
+            if brush.0 != 0 {
+                FillRect(hdc, &rect, brush);
+                let _ = DeleteObject(brush);
+            }
+        }
+    }
+    let inset = 3;
+    let left = rect.left + inset;
+    let top = rect.top + inset;
+    let right = rect.right - inset;
+    let bottom = rect.bottom - inset;
+    if right <= left || bottom <= top {
+        return;
+    }
+    unsafe {
+        let pen = CreatePen(PS_SOLID, 1, pen_color);
+        if pen.0 == 0 {
+            return;
+        }
+        let old = SelectObject(hdc, HGDIOBJ(pen.0));
+        let _ = MoveToEx(hdc, left, top, None);
+        let _ = LineTo(hdc, right, bottom);
+        let _ = MoveToEx(hdc, left + 1, top, None);
+        let _ = LineTo(hdc, right + 1, bottom);
+        let _ = MoveToEx(hdc, right - 1, top, None);
+        let _ = LineTo(hdc, left - 1, bottom);
+        let _ = MoveToEx(hdc, right, top, None);
+        let _ = LineTo(hdc, left, bottom);
+        SelectObject(hdc, old);
+        let _ = DeleteObject(HGDIOBJ(pen.0));
+    }
+}
+
+fn draw_top_tab_item(state: &AppState, dis: &DRAWITEMSTRUCT) {
+    let index = dis.itemID as usize;
+    let Some(doc_tab) = state.docs.get(index) else {
+        return;
+    };
+    let item_state = dis.itemState.0;
+    let selected = (item_state & ODS_SELECTED.0) != 0;
+    let hot = (item_state & ODS_HOTLIGHT.0) != 0
+        || state.tab_host.hot_in_top && state.tab_host.hot_tab == Some(index);
+    let (fill, fg) = if selected {
+        (
+            state.tab_host.theme.selection_bg,
+            state.tab_host.theme.selection_fg,
+        )
+    } else if hot {
+        (state.tab_host.theme.hover_bg, state.tab_host.theme.fg)
+    } else {
+        (state.tab_host.theme.bg, state.tab_host.theme.fg)
+    };
+    let hdc = dis.hDC;
+    let rect = dis.rcItem;
+    unsafe {
+        let brush = CreateSolidBrush(fill);
+        if brush.0 != 0 {
+            FillRect(hdc, &rect, brush);
+            let _ = DeleteObject(brush);
+        }
+    }
+    let close_rect = tab_close_rect(state.tab_host.top_tabs, rect);
+    let pad = scale_for_dpi(state.tab_host.top_tabs, 8);
+    let mut text_rect = windows::Win32::Foundation::RECT {
+        left: rect.left + pad,
+        top: rect.top,
+        right: (close_rect.left - pad).max(rect.left + pad),
+        bottom: rect.bottom,
+    };
+    let title = tab_title(doc_tab);
+    let mut wide: Vec<u16> = title.encode_utf16().collect();
+    unsafe {
+        SetBkMode(hdc, TRANSPARENT);
+        SetTextColor(hdc, fg);
+        if !wide.is_empty() {
+            DrawTextW(
+                hdc,
+                &mut wide,
+                &mut text_rect,
+                DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS | DT_NOPREFIX,
+            );
+        }
+    }
+    let close_hot = state.tab_host.hot_in_top
+        && state.tab_host.hot_tab == Some(index)
+        && state.tab_host.hot_close;
+    draw_close_glyph(hdc, close_rect, fg, close_hot);
+}
+
 fn handle_vertical_tab_custom_draw(state: &AppState, lparam: LPARAM) -> LRESULT {
     let draw = unsafe { &mut *(lparam.0 as *mut NMLVCUSTOMDRAW) };
     if draw.nmcd.dwDrawStage == CDDS_PREPAINT {
@@ -5300,17 +5603,39 @@ fn handle_vertical_tab_custom_draw(state: &AppState, lparam: LPARAM) -> LRESULT 
     }
     if draw.nmcd.dwDrawStage == CDDS_ITEMPREPAINT {
         let item_state = draw.nmcd.uItemState.0;
-        if (item_state & CDIS_SELECTED.0) != 0 {
-            draw.clrText = state.tab_host.theme.selection_fg;
-            draw.clrTextBk = state.tab_host.theme.selection_bg;
+        let (text_fg, fill_bg) = if (item_state & CDIS_SELECTED.0) != 0 {
+            (
+                state.tab_host.theme.selection_fg,
+                state.tab_host.theme.selection_bg,
+            )
         } else if (item_state & CDIS_HOT.0) != 0 {
-            draw.clrText = state.tab_host.theme.fg;
-            draw.clrTextBk = state.tab_host.theme.hover_bg;
+            (state.tab_host.theme.fg, state.tab_host.theme.hover_bg)
         } else {
-            draw.clrText = state.tab_host.theme.fg;
-            draw.clrTextBk = state.tab_host.theme.bg;
+            (state.tab_host.theme.fg, state.tab_host.theme.bg)
+        };
+        unsafe {
+            let brush = CreateSolidBrush(fill_bg);
+            if brush.0 != 0 {
+                FillRect(draw.nmcd.hdc, &draw.nmcd.rc, brush);
+                let _ = DeleteObject(brush);
+            }
         }
-        return LRESULT(CDRF_NEWFONT as isize);
+        draw.clrText = text_fg;
+        draw.clrTextBk = fill_bg;
+        return LRESULT((CDRF_NEWFONT | CDRF_NOTIFYPOSTPAINT) as isize);
+    }
+    if draw.nmcd.dwDrawStage == CDDS_ITEMPOSTPAINT {
+        let item_index = draw.nmcd.dwItemSpec;
+        let hot_index = state.tab_host.hot_tab;
+        let close_hot = hot_index == Some(item_index) && state.tab_host.hot_close;
+        let text_fg = if (draw.nmcd.uItemState.0 & CDIS_SELECTED.0) != 0 {
+            state.tab_host.theme.selection_fg
+        } else {
+            state.tab_host.theme.fg
+        };
+        let close_rect = tab_close_rect(state.tab_host.vertical_tabs, draw.nmcd.rc);
+        draw_close_glyph(draw.nmcd.hdc, close_rect, text_fg, close_hot);
+        return LRESULT(CDRF_DODEFAULT as isize);
     }
     LRESULT(CDRF_DODEFAULT as isize)
 }
@@ -5318,7 +5643,7 @@ fn handle_vertical_tab_custom_draw(state: &AppState, lparam: LPARAM) -> LRESULT 
 fn set_editor_dark_mode(hwnd: HWND, state: &mut AppState, enabled: bool) {
     state.editor_dark = enabled;
     update_editor_dark_menu(hwnd, enabled);
-    for doc_tab in &state.docs {
+    for doc_tab in &mut state.docs {
         apply_syntax_for_doc(doc_tab, enabled);
     }
     if let Err(err) = update_tab_host_theme(state, enabled) {

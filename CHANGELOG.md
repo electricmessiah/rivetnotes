@@ -7,6 +7,31 @@ The format is based on Keep a Changelog, and this project adheres to SemVer.
 
 - TBD.
 
+## [0.4.4] - 2026-05-15
+
+- Fixed `Ctrl+S` not saving: the accelerator was bound only to `Ctrl+Shift+S`
+  (Save All), so plain `Ctrl+S` fell through to Scintilla and inserted a
+  control-character glyph into the editor. Added a dedicated
+  `Ctrl+S -> IDM_FILE_SAVE` accelerator.
+- Added a persistent close 'x' button on every tab in all three placements
+  (Top, Left, Right). Clicking the 'x' routes through the existing `close_tab`
+  flow, preserving the dirty-document save prompt.
+- Made active-tab highlighting consistent across placements. Top tabs are now
+  owner-drawn (`TCS_OWNERDRAWFIXED`) and the vertical `ListView` custom-draw
+  handler explicitly fills the full row, so the selected/hover state reads
+  cleanly in both modes and tracks `tab_host.theme` (light/dark).
+- Replaced the manual toggle-strikethrough command with a markdown-driven
+  `Strikeout` command: selected text is wrapped in `~~...~~` and the editor
+  re-scans documents on edit to apply the strike indicator to all matching
+  spans, with a `Too many strike matches` status flag past the cap. Removed
+  the now-unused Scintilla indicator value APIs and session-stored strike
+  ranges.
+- Added a debounced 250 ms strikethrough re-highlight timer
+  (`TIMER_MD_STRIKE`) keyed off `SCN_MODIFIED` to keep editor responsiveness
+  during rapid typing.
+- Added a `CLAUDE.md` guide at the repo root so future Claude Code sessions
+  can orient quickly to build commands and module layout.
+
 ## [0.4.3] - 2026-03-03
 
 - Added a `View -> Dark Mode` toggle so users can switch between light and dark themes.

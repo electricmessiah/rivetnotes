@@ -58,7 +58,7 @@ pub struct SessionEntry {
     pub backup_timestamp: Option<u64>,
     #[serde(default)]
     pub disk_timestamp_at_backup: Option<u64>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub strike_ranges: Vec<StrikeRange>,
 }
 
