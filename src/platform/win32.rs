@@ -83,7 +83,6 @@ use crate::editor::scintilla;
 use crate::error::{AppError, Result};
 use crate::logging;
 use crate::platform::clipboard::{Clipboard, WinClipboard};
-use crate::textops::checkbox::{insert_checkbox_line, toggle_checkbox_line};
 use crate::textops::trim::{trim_edges_spaces_tabs, trim_line_preserve_eol};
 use regex::RegexBuilder;
 
@@ -108,8 +107,6 @@ const IDM_EDIT_MOVE_LINE_DOWN: u16 = 309;
 const IDM_EDIT_INDENT: u16 = 310;
 const IDM_EDIT_OUTDENT: u16 = 311;
 const CMD_TRIM_LEADING_TRAILING: u16 = 312;
-const CMD_TOGGLE_CHECKBOX: u16 = 313;
-const CMD_INSERT_CHECKBOX: u16 = 314;
 const CMD_EDITOR_STRIKEOUT: u16 = 315;
 const IDM_EDIT_FIND: u16 = 320;
 const IDM_EDIT_FIND_NEXT: u16 = 321;
@@ -1422,22 +1419,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                     }
                     LRESULT(0)
                 }
-                CMD_TOGGLE_CHECKBOX => {
-                    if let Some(state) = get_state(hwnd)
-                        && let Some(editor) = active_editor(state)
-                    {
-                        toggle_checkboxes(editor);
-                    }
-                    LRESULT(0)
-                }
-                CMD_INSERT_CHECKBOX => {
-                    if let Some(state) = get_state(hwnd)
-                        && let Some(editor) = active_editor(state)
-                    {
-                        insert_checkboxes(editor);
-                    }
-                    LRESULT(0)
-                }
+
                 IDM_FILE_NEW => {
                     if let Some(state) = get_state(hwnd) {
                         let instance = match module_instance() {
@@ -2660,87 +2642,6 @@ fn trim_leading_and_trailing_whitespace(editor: HWND) {
         trim_line_whitespace(editor, line);
     }
     scintilla::end_undo_action(editor);
-}
-
-fn toggle_checkboxes(editor: HWND) {
-    apply_checkbox_command(editor, toggle_checkbox_line);
-}
-
-fn insert_checkboxes(editor: HWND) {
-    apply_checkbox_command(editor, insert_checkbox_line);
-}
-
-fn apply_checkbox_command(editor: HWND, transform: impl Fn(&str) -> Option<String>) {
-    let Some((start_line, end_line)) = checkbox_target_lines(editor) else {
-        return;
-    };
-
-    scintilla::begin_undo_action(editor);
-    for line in (start_line..=end_line).rev() {
-        apply_checkbox_command_to_line(editor, line, &transform);
-    }
-    scintilla::end_undo_action(editor);
-}
-
-fn checkbox_target_lines(editor: HWND) -> Option<(usize, usize)> {
-    let line_count = scintilla::line_count(editor);
-    if line_count == 0 {
-        return None;
-    }
-
-    let sel_start = scintilla::selection_start(editor);
-    let sel_end = scintilla::selection_end(editor);
-    if sel_start == sel_end {
-        let current_line =
-            scintilla::line_from_position(editor, scintilla::get_current_pos(editor));
-        return Some((current_line, current_line));
-    }
-
-    let (start_pos, end_pos) = if sel_start <= sel_end {
-        (sel_start, sel_end)
-    } else {
-        (sel_end, sel_start)
-    };
-    let start_line = scintilla::line_from_position(editor, start_pos);
-    let mut end_line = scintilla::line_from_position(editor, end_pos);
-    if end_pos > start_pos {
-        let line_start = scintilla::position_from_line(editor, end_line);
-        if end_pos == line_start && end_line > start_line {
-            end_line = end_line.saturating_sub(1);
-        }
-    }
-    Some((start_line, end_line))
-}
-
-fn apply_checkbox_command_to_line(
-    editor: HWND,
-    line: usize,
-    transform: &impl Fn(&str) -> Option<String>,
-) {
-    let line_start = scintilla::position_from_line(editor, line);
-    let line_end = scintilla::line_end_position(editor, line);
-    let line_text = editor_line_text(editor, line_start, line_end);
-    let Some(updated) = transform(&line_text) else {
-        return;
-    };
-    if updated == line_text {
-        return;
-    }
-
-    scintilla::set_target_range(editor, line_start, line_end);
-    scintilla::replace_target(editor, &updated);
-}
-
-fn editor_line_text(editor: HWND, start: usize, end: usize) -> String {
-    if end <= start {
-        return String::new();
-    }
-
-    let mut raw = Vec::with_capacity(end - start);
-    for pos in start..end {
-        raw.push(scintilla::char_at(editor, pos));
-    }
-    String::from_utf8_lossy(&raw).into_owned()
 }
 
 fn trim_line_whitespace(editor: HWND, line: usize) {
@@ -5465,18 +5366,6 @@ fn show_editor_context_menu(hwnd: HWND, editor: HWND, x: i32, y: i32) -> Option<
             CMD_TRIM_LEADING_TRAILING as usize,
             w!("Trim Leading + Trailing Whitespace"),
         );
-        let _ = AppendMenuW(
-            menu,
-            MF_STRING,
-            CMD_TOGGLE_CHECKBOX as usize,
-            w!("Toggle Checkbox"),
-        );
-        let _ = AppendMenuW(
-            menu,
-            MF_STRING,
-            CMD_INSERT_CHECKBOX as usize,
-            w!("Place Checkbox"),
-        );
         let _ = AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null());
         let _ = AppendMenuW(
             menu,
@@ -5528,11 +5417,6 @@ fn show_editor_context_menu(hwnd: HWND, editor: HWND, x: i32, y: i32) -> Option<
         } else {
             MF_BYCOMMAND | MF_GRAYED
         };
-        let checkbox_flags = if has_selection {
-            MF_BYCOMMAND | MF_ENABLED
-        } else {
-            MF_BYCOMMAND | MF_GRAYED
-        };
         let _ = EnableMenuItem(menu, IDM_EDIT_UNDO as u32, undo_flags);
         let _ = EnableMenuItem(menu, IDM_EDIT_REDO as u32, redo_flags);
         let _ = EnableMenuItem(menu, IDM_EDIT_CUT as u32, cut_copy_delete_flags);
@@ -5541,8 +5425,6 @@ fn show_editor_context_menu(hwnd: HWND, editor: HWND, x: i32, y: i32) -> Option<
         let _ = EnableMenuItem(menu, IDM_EDIT_PASTE as u32, paste_flags);
         let _ = EnableMenuItem(menu, CMD_TRANSFORM_UPPERCASE as u32, upper_flags);
         let _ = EnableMenuItem(menu, CMD_TRANSFORM_LOWERCASE as u32, lower_flags);
-        let _ = EnableMenuItem(menu, CMD_TOGGLE_CHECKBOX as u32, checkbox_flags);
-        let _ = EnableMenuItem(menu, CMD_INSERT_CHECKBOX as u32, checkbox_flags);
         let _ = EnableMenuItem(menu, CMD_EDITOR_STRIKEOUT as u32, strike_flags);
         let collapse_flags = {
             let line_start = scintilla::line_from_position(editor, sel_start.max(0) as usize);

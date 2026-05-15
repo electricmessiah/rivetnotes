@@ -7,6 +7,15 @@ The format is based on Keep a Changelog, and this project adheres to SemVer.
 
 - TBD.
 
+## [0.4.7] - 2026-05-15
+
+- Removed the "Toggle Checkbox" and "Place Checkbox" commands from the editor
+  right-click context menu and from the editor command set entirely. The
+  `textops/checkbox` module, its helper wrappers in `win32.rs`, and the
+  associated `CMD_TOGGLE_CHECKBOX` / `CMD_INSERT_CHECKBOX` constants are all
+  gone. Files containing `- [ ] task` style lines continue to display normally
+  — the feature was edit-time only with no display side-effects.
+
 ## [0.4.6] - 2026-05-15
 
 - Replaced the Hide-Lines / Unhide-All commands with a **Collapse Selection**

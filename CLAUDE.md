@@ -37,7 +37,7 @@ Rivetnotes is a **Windows-native text editor** written in Rust. All unsafe Win32
 | `app/session.rs` | `SessionData` (open tabs, active tab, schema version), restore logic, periodic checkpoint |
 | `app/settings.rs` | `UiSettings`: tab placement (Top/Left/Right), vertical-tab width, dark mode, smart-highlight, large-file thresholds |
 | `storage/atomic_write.rs` | Crash-safe atomic writes (temp-file + replace), JSON serialization, stale-temp cleanup |
-| `textops/` | Text transforms: trim whitespace, markdown checkboxes, strikethrough |
+| `textops/` | Text transforms: trim whitespace, strikethrough |
 | `commands/` | Clipboard helpers (copy path/filename/directory), selection case checks |
 | `logging.rs` | Rotating file logs to `%APPDATA%\Rivet\logs\`, controlled by `RIVET_VERBOSE` env var |
 | `error.rs` | Central `AppError` type; user-facing errors shown via `platform::win32::show_error()` |
