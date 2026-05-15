@@ -7,6 +7,32 @@ The format is based on Keep a Changelog, and this project adheres to SemVer.
 
 - TBD.
 
+## [0.4.8] - 2026-05-15
+
+- Bumped the per-tab max width clamp from 260 to 400 DPI-scaled px so most
+  filenames fit fully in the tab label before any ellipsis truncation kicks
+  in. Tabs still grow to fit their text individually; the close `×` stays
+  anchored to the right edge.
+- Extended dark mode beyond the editor to cover the rest of the window
+  chrome, matching Notepad++:
+  - **Title bar** now follows the dark theme via
+    `DwmSetWindowAttribute(DWMWA_USE_IMMERSIVE_DARK_MODE)` (attribute 20
+    on Win10 20H1+ with an attribute-19 fallback for older builds).
+  - **Menu bar** background and items are painted dark via the
+    undocumented `WM_UAHDRAWMENU` / `WM_UAHDRAWMENUITEM` messages, with
+    `SetPreferredAppMode` (uxtheme.dll ordinal 135) +
+    `AllowDarkModeForWindow` (ordinal 133) covering popup/context menus.
+  - **Status bar** is now subclassed: `WM_PAINT` paints each part with the
+    same `tab_host.theme` palette used by the tab strip, with `theme.border`
+    separators between parts.
+  - **Find / Replace / Find-in-Files / Go-To-Line** dialogs apply dark
+    title bars and dark backgrounds on creation; `WM_CTLCOLOR*` returns
+    cached dark brushes so Static / Edit / Button / ListBox controls all
+    pick up theme colors.
+- Added `src/platform/dark_mode.rs` to encapsulate every undocumented
+  uxtheme/UAH binding behind safe wrappers that no-op cleanly on older
+  Windows builds.
+
 ## [0.4.7] - 2026-05-15
 
 - Removed the "Toggle Checkbox" and "Place Checkbox" commands from the editor

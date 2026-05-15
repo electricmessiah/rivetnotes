@@ -10,10 +10,10 @@ use windows::Win32::Foundation::{
     POINT, SIZE, WPARAM,
 };
 use windows::Win32::Graphics::Gdi::{
-    BeginPaint, CreatePen, CreateSolidBrush, DT_END_ELLIPSIS, DT_NOPREFIX, DT_SINGLELINE,
-    DT_VCENTER, DeleteObject, DrawTextW, EndPaint, FillRect, GetDC, GetTextExtentPoint32W, HBRUSH,
-    HDC, HGDIOBJ, InvalidateRect, LineTo, MoveToEx, PAINTSTRUCT, PS_SOLID, ReleaseDC,
-    ScreenToClient, SelectObject, SetBkMode, SetTextColor, TRANSPARENT,
+    BeginPaint, CreatePen, CreateSolidBrush, DT_CENTER, DT_END_ELLIPSIS, DT_HIDEPREFIX,
+    DT_NOPREFIX, DT_SINGLELINE, DT_VCENTER, DeleteObject, DrawTextW, EndPaint, FillRect, GetDC,
+    GetTextExtentPoint32W, HBRUSH, HDC, HGDIOBJ, InvalidateRect, LineTo, MoveToEx, PAINTSTRUCT,
+    PS_SOLID, ReleaseDC, ScreenToClient, SelectObject, SetBkMode, SetTextColor, TRANSPARENT,
 };
 use windows::Win32::System::Com::CoTaskMemFree;
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
@@ -30,7 +30,8 @@ use windows::Win32::UI::Controls::{
     LVM_SETBKCOLOR, LVM_SETCOLUMNWIDTH, LVM_SETEXTENDEDLISTVIEWSTYLE, LVM_SETITEMSTATE,
     LVM_SETTEXTBKCOLOR, LVM_SETTEXTCOLOR, LVN_ITEMCHANGED, LVS_EX_DOUBLEBUFFER,
     LVS_EX_FULLROWSELECT, LVS_NOCOLUMNHEADER, LVS_REPORT, LVS_SHOWSELALWAYS, LVS_SINGLESEL,
-    NM_CUSTOMDRAW, NM_RCLICK, NMHDR, NMLISTVIEW, NMLVCUSTOMDRAW, ODS_HOTLIGHT, ODS_SELECTED,
+    NM_CUSTOMDRAW, NM_RCLICK, NMHDR, NMLISTVIEW, NMLVCUSTOMDRAW, ODS_HOTLIGHT, ODS_INACTIVE,
+    ODS_NOACCEL, ODS_SELECTED, SB_GETPARTS, SB_GETRECT, SB_GETTEXTLENGTHW, SB_GETTEXTW,
     SB_SETPARTS, SB_SETTEXTW, STATUSCLASSNAMEW, TCHITTESTINFO, TCIF_TEXT, TCITEMW, TCM_DELETEITEM,
     TCM_GETCURSEL, TCM_GETITEMRECT, TCM_HITTEST, TCM_INSERTITEMW, TCM_SETCURSEL, TCM_SETITEMSIZE,
     TCM_SETITEMW, TCN_SELCHANGE, TCS_OWNERDRAWFIXED, WC_LISTVIEWW, WC_TABCONTROLW,
@@ -50,23 +51,25 @@ use windows::Win32::UI::WindowsAndMessaging::{
     CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyAcceleratorTable, DestroyMenu,
     DestroyWindow, DispatchMessageW, ES_AUTOHSCROLL, ES_NUMBER, EnableMenuItem, FALT, FCONTROL,
     FSHIFT, FVIRTKEY, GCLP_HICON, GCLP_HICONSM, GWLP_USERDATA, GetClientRect, GetCursorPos,
-    GetMenu, GetMessageW, GetParent, GetSystemMetrics, GetWindowLongPtrW, GetWindowTextLengthW,
-    GetWindowTextW, HACCEL, HICON, HMENU, HWND_NOTOPMOST, HWND_TOPMOST, ICON_BIG, ICON_SMALL,
-    ICON_SMALL2, IDC_ARROW, IDC_SIZEWE, IDI_APPLICATION, IDNO, IDYES, IMAGE_ICON, KillTimer,
-    LB_ADDSTRING, LB_GETCURSEL, LB_RESETCONTENT, LBN_DBLCLK, LBS_NOINTEGRALHEIGHT, LBS_NOTIFY,
-    LR_DEFAULTCOLOR, LR_SHARED, LoadCursorW, LoadIconW, LoadImageW, MB_ICONERROR,
-    MB_ICONINFORMATION, MB_ICONWARNING, MB_OK, MB_YESNO, MB_YESNOCANCEL, MF_BYCOMMAND, MF_CHECKED,
-    MF_ENABLED, MF_GRAYED, MF_POPUP, MF_SEPARATOR, MF_STRING, MF_UNCHECKED, MSG, MessageBoxW,
-    PostQuitMessage, RegisterClassExW, SM_CXICON, SM_CXSMICON, SM_CYICON, SM_CYSMICON, SW_HIDE,
-    SW_SHOW, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SYSTEM_METRICS_INDEX,
-    SendMessageW, SetClassLongPtrW, SetCursor, SetTimer, SetWindowLongPtrW, SetWindowPos,
-    SetWindowTextW, ShowWindow, TPM_NONOTIFY, TPM_RETURNCMD, TPM_RIGHTBUTTON, TrackPopupMenu,
-    TranslateAcceleratorW, TranslateMessage, WINDOW_STYLE, WM_ACTIVATEAPP, WM_CAPTURECHANGED,
-    WM_CLOSE, WM_COMMAND, WM_CONTEXTMENU, WM_CREATE, WM_DESTROY, WM_DRAWITEM, WM_DROPFILES,
-    WM_ERASEBKGND, WM_GETFONT, WM_GETICON, WM_INITMENUPOPUP, WM_LBUTTONDOWN, WM_LBUTTONUP,
-    WM_MBUTTONUP, WM_MOUSEMOVE, WM_NCDESTROY, WM_NOTIFY, WM_PAINT, WM_SETCURSOR, WM_SETICON,
-    WM_SIZE, WM_TIMER, WNDCLASSEXW, WS_BORDER, WS_CAPTION, WS_CHILD, WS_CLIPSIBLINGS,
-    WS_OVERLAPPEDWINDOW, WS_SYSMENU, WS_TABSTOP, WS_VISIBLE, WS_VSCROLL,
+    GetMenu, GetMenuBarInfo, GetMenuItemInfoW, GetMessageW, GetParent, GetSystemMetrics,
+    GetWindowLongPtrW, GetWindowRect, GetWindowTextLengthW, GetWindowTextW, HACCEL, HICON, HMENU,
+    HWND_NOTOPMOST, HWND_TOPMOST, ICON_BIG, ICON_SMALL, ICON_SMALL2, IDC_ARROW, IDC_SIZEWE,
+    IDI_APPLICATION, IDNO, IDYES, IMAGE_ICON, KillTimer, LB_ADDSTRING, LB_GETCURSEL,
+    LB_RESETCONTENT, LBN_DBLCLK, LBS_NOINTEGRALHEIGHT, LBS_NOTIFY, LR_DEFAULTCOLOR, LR_SHARED,
+    LoadCursorW, LoadIconW, LoadImageW, MB_ICONERROR, MB_ICONINFORMATION, MB_ICONWARNING, MB_OK,
+    MB_YESNO, MB_YESNOCANCEL, MENUBARINFO, MENUITEMINFOW, MF_BYCOMMAND, MF_CHECKED, MF_ENABLED,
+    MF_GRAYED, MF_POPUP, MF_SEPARATOR, MF_STRING, MF_UNCHECKED, MIIM_STRING, MSG, MessageBoxW,
+    OBJID_MENU, PostQuitMessage, RegisterClassExW, SM_CXICON, SM_CXSMICON, SM_CYICON, SM_CYSMICON,
+    SW_HIDE, SW_SHOW, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER,
+    SYSTEM_METRICS_INDEX, SendMessageW, SetClassLongPtrW, SetCursor, SetTimer, SetWindowLongPtrW,
+    SetWindowPos, SetWindowTextW, ShowWindow, TPM_NONOTIFY, TPM_RETURNCMD, TPM_RIGHTBUTTON,
+    TrackPopupMenu, TranslateAcceleratorW, TranslateMessage, WINDOW_STYLE, WM_ACTIVATEAPP,
+    WM_CAPTURECHANGED, WM_CLOSE, WM_COMMAND, WM_CONTEXTMENU, WM_CREATE, WM_CTLCOLORBTN,
+    WM_CTLCOLORDLG, WM_CTLCOLOREDIT, WM_CTLCOLORLISTBOX, WM_CTLCOLORSTATIC, WM_DESTROY,
+    WM_DRAWITEM, WM_DROPFILES, WM_ERASEBKGND, WM_GETFONT, WM_GETICON, WM_INITMENUPOPUP,
+    WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONUP, WM_MOUSEMOVE, WM_NCDESTROY, WM_NOTIFY, WM_PAINT,
+    WM_SETCURSOR, WM_SETICON, WM_SIZE, WM_TIMER, WNDCLASSEXW, WS_BORDER, WS_CAPTION, WS_CHILD,
+    WS_CLIPSIBLINGS, WS_OVERLAPPEDWINDOW, WS_SYSMENU, WS_TABSTOP, WS_VISIBLE, WS_VSCROLL,
 };
 use windows::core::PWSTR;
 use windows::core::{HSTRING, PCWSTR, w};
@@ -83,6 +86,7 @@ use crate::editor::scintilla;
 use crate::error::{AppError, Result};
 use crate::logging;
 use crate::platform::clipboard::{Clipboard, WinClipboard};
+use crate::platform::dark_mode;
 use crate::textops::trim::{trim_edges_spaces_tabs, trim_line_preserve_eol};
 use regex::RegexBuilder;
 
@@ -437,7 +441,7 @@ pub fn run() -> Result<()> {
             Default::default(),
             class_name,
             w!("Rivet"),
-            WS_OVERLAPPEDWINDOW | WS_VISIBLE,
+            WS_OVERLAPPEDWINDOW,
             CW_USEDEFAULT,
             CW_USEDEFAULT,
             CW_USEDEFAULT,
@@ -1096,6 +1100,92 @@ fn message_loop(hwnd: HWND, accel: HACCEL) -> Result<()> {
 }
 
 unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+    if msg == dark_mode::WM_UAHDRAWMENU
+        && let Some(state) = get_state(hwnd)
+        && state.editor_dark
+    {
+        let pudm = lparam.0 as *const dark_mode::UahMenu;
+        if !pudm.is_null() {
+            let udm = unsafe { *pudm };
+            let mut mbi = MENUBARINFO {
+                cbSize: std::mem::size_of::<MENUBARINFO>() as u32,
+                ..Default::default()
+            };
+            let mut rc_win = windows::Win32::Foundation::RECT::default();
+            unsafe {
+                let _ = GetMenuBarInfo(hwnd, OBJID_MENU, 0, &mut mbi);
+                let _ = GetWindowRect(hwnd, &mut rc_win);
+            }
+            let mut rc = mbi.rcBar;
+            rc.left -= rc_win.left;
+            rc.top -= rc_win.top;
+            rc.right -= rc_win.left;
+            rc.bottom -= rc_win.top;
+            let brush = unsafe { CreateSolidBrush(state.tab_host.theme.bg) };
+            if brush.0 != 0 {
+                unsafe {
+                    let _ = FillRect(udm.hdc, &rc, brush);
+                    let _ = DeleteObject(brush);
+                }
+            }
+            return LRESULT(0);
+        }
+    }
+    if msg == dark_mode::WM_UAHDRAWMENUITEM
+        && let Some(state) = get_state(hwnd)
+        && state.editor_dark
+    {
+        let pudmi = lparam.0 as *const dark_mode::UahDrawMenuItem;
+        if !pudmi.is_null() {
+            let udmi = unsafe { *pudmi };
+            let theme = state.tab_host.theme;
+            let hot = (udmi.dis.itemState.0 & (ODS_HOTLIGHT.0 | ODS_SELECTED.0)) != 0;
+            let inactive = (udmi.dis.itemState.0 & ODS_INACTIVE.0) != 0;
+            let bg = if hot { theme.selection_bg } else { theme.bg };
+            let fg = if inactive {
+                theme.border
+            } else if hot {
+                theme.selection_fg
+            } else {
+                theme.fg
+            };
+
+            let mut buf: [u16; 256] = [0; 256];
+            let mut mii = MENUITEMINFOW {
+                cbSize: std::mem::size_of::<MENUITEMINFOW>() as u32,
+                fMask: MIIM_STRING,
+                dwTypeData: windows::core::PWSTR(buf.as_mut_ptr()),
+                cch: buf.len() as u32 - 1,
+                ..Default::default()
+            };
+            unsafe {
+                let _ = GetMenuItemInfoW(udmi.um.hmenu, udmi.umi.i_position as u32, true, &mut mii);
+            }
+
+            let bg_brush = unsafe { CreateSolidBrush(bg) };
+            if bg_brush.0 != 0 {
+                unsafe {
+                    let _ = FillRect(udmi.um.hdc, &udmi.dis.rcItem, bg_brush);
+                    let _ = DeleteObject(bg_brush);
+                }
+            }
+
+            let mut flags = DT_CENTER | DT_SINGLELINE | DT_VCENTER;
+            if (udmi.dis.itemState.0 & ODS_NOACCEL.0) != 0 {
+                flags |= DT_HIDEPREFIX;
+            }
+            let len = mii.cch as usize;
+            if len > 0 {
+                unsafe {
+                    SetBkMode(udmi.um.hdc, TRANSPARENT);
+                    SetTextColor(udmi.um.hdc, fg);
+                    let mut text_rect = udmi.dis.rcItem;
+                    DrawTextW(udmi.um.hdc, &mut buf[..len], &mut text_rect, flags);
+                }
+            }
+            return LRESULT(0);
+        }
+    }
     match msg {
         WM_CREATE => {
             let instance = match unsafe { GetModuleHandleW(None) } {
@@ -1852,6 +1942,10 @@ fn create_children(hwnd: HWND, instance: HINSTANCE) -> Result<AppState> {
         }
     };
 
+    // Apply dark mode early so the title bar, menu bar, and any child windows
+    // created below pick up the right theme before the first paint.
+    dark_mode::apply_to_window(hwnd, ui_settings.editor_dark);
+
     let (icon_big, icon_small) = load_main_icons(instance);
     let top_tabs = unsafe {
         CreateWindowExW(
@@ -1966,6 +2060,9 @@ fn create_children(hwnd: HWND, instance: HINSTANCE) -> Result<AppState> {
     };
     if status.0 == 0 {
         return Err(AppError::win32("CreateWindowExW(StatusBar)"));
+    }
+    unsafe {
+        let _ = SetWindowSubclass(status, Some(status_bar_subclass_proc), 0, 0);
     }
 
     let theme = tab_theme(ui_settings.editor_dark);
@@ -4349,7 +4446,7 @@ fn tab_bar_height(state: &AppState) -> i32 {
 }
 
 const TAB_ITEM_MIN_WIDTH: i32 = 120;
-const TAB_ITEM_MAX_WIDTH: i32 = 260;
+const TAB_ITEM_MAX_WIDTH: i32 = 400;
 const TAB_ITEM_LABEL_PADDING: i32 = 12;
 
 unsafe extern "system" fn top_tabs_subclass_proc(
@@ -4407,6 +4504,136 @@ unsafe extern "system" fn top_tabs_subclass_proc(
         WM_NCDESTROY => {
             unsafe {
                 let _ = RemoveWindowSubclass(hwnd, Some(top_tabs_subclass_proc), 0);
+            }
+            return unsafe { DefSubclassProc(hwnd, msg, wparam, lparam) };
+        }
+        _ => {}
+    }
+    unsafe { DefSubclassProc(hwnd, msg, wparam, lparam) }
+}
+
+unsafe extern "system" fn status_bar_subclass_proc(
+    hwnd: HWND,
+    msg: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+    _id_subclass: usize,
+    _ref_data: usize,
+) -> LRESULT {
+    match msg {
+        WM_ERASEBKGND => {
+            return LRESULT(1);
+        }
+        WM_PAINT => {
+            let parent = unsafe { GetParent(hwnd) };
+            let theme_opt = get_state(parent).map(|s| s.tab_host.theme);
+            let Some(theme) = theme_opt else {
+                return unsafe { DefSubclassProc(hwnd, msg, wparam, lparam) };
+            };
+
+            let mut ps = PAINTSTRUCT::default();
+            let hdc = unsafe { BeginPaint(hwnd, &mut ps) };
+            if hdc.0 == 0 {
+                return LRESULT(0);
+            }
+
+            let mut client = windows::Win32::Foundation::RECT::default();
+            unsafe {
+                let _ = GetClientRect(hwnd, &mut client);
+            }
+            let bg_brush = unsafe { CreateSolidBrush(theme.bg) };
+            if bg_brush.0 != 0 {
+                unsafe {
+                    let _ = FillRect(hdc, &client, bg_brush);
+                    let _ = DeleteObject(bg_brush);
+                }
+            }
+
+            let part_count =
+                unsafe { SendMessageW(hwnd, SB_GETPARTS, WPARAM(0), LPARAM(0)).0 } as i32;
+            let parts = part_count.max(1);
+
+            let hfont = unsafe { SendMessageW(hwnd, WM_GETFONT, WPARAM(0), LPARAM(0)) };
+            let restore_font = if hfont.0 != 0 {
+                Some(unsafe { SelectObject(hdc, HGDIOBJ(hfont.0)) })
+            } else {
+                None
+            };
+            unsafe {
+                SetBkMode(hdc, TRANSPARENT);
+                SetTextColor(hdc, theme.fg);
+            }
+
+            let border_pen = unsafe { CreatePen(PS_SOLID, 1, theme.border) };
+
+            for part in 0..parts {
+                let mut rect = windows::Win32::Foundation::RECT::default();
+                unsafe {
+                    SendMessageW(
+                        hwnd,
+                        SB_GETRECT,
+                        WPARAM(part as usize),
+                        LPARAM(&mut rect as *mut _ as isize),
+                    );
+                }
+
+                let text_len = unsafe {
+                    SendMessageW(hwnd, SB_GETTEXTLENGTHW, WPARAM(part as usize), LPARAM(0)).0
+                };
+                let low = (text_len as u32) & 0xFFFF;
+                let mut buf: Vec<u16> = vec![0u16; (low as usize) + 1];
+                if low > 0 {
+                    unsafe {
+                        SendMessageW(
+                            hwnd,
+                            SB_GETTEXTW,
+                            WPARAM(part as usize),
+                            LPARAM(buf.as_mut_ptr() as isize),
+                        );
+                    }
+                }
+
+                let mut text_rect = rect;
+                text_rect.left += scale_for_dpi(hwnd, 6);
+                text_rect.right -= scale_for_dpi(hwnd, 6);
+                if low > 0 {
+                    unsafe {
+                        DrawTextW(
+                            hdc,
+                            &mut buf[..low as usize],
+                            &mut text_rect,
+                            DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS | DT_NOPREFIX,
+                        );
+                    }
+                }
+
+                if part + 1 < parts && border_pen.0 != 0 {
+                    let prev = unsafe { SelectObject(hdc, HGDIOBJ(border_pen.0)) };
+                    unsafe {
+                        let _ = MoveToEx(hdc, rect.right - 1, rect.top + 2, None);
+                        let _ = LineTo(hdc, rect.right - 1, rect.bottom - 2);
+                        SelectObject(hdc, prev);
+                    }
+                }
+            }
+
+            if border_pen.0 != 0 {
+                unsafe {
+                    let _ = DeleteObject(border_pen);
+                }
+            }
+            if let Some(prev) = restore_font {
+                unsafe { SelectObject(hdc, prev) };
+            }
+
+            unsafe {
+                let _ = EndPaint(hwnd, &ps);
+            }
+            return LRESULT(0);
+        }
+        WM_NCDESTROY => {
+            unsafe {
+                let _ = RemoveWindowSubclass(hwnd, Some(status_bar_subclass_proc), 0);
             }
             return unsafe { DefSubclassProc(hwnd, msg, wparam, lparam) };
         }
@@ -5119,6 +5346,45 @@ fn tab_theme(dark: bool) -> TabTheme {
     }
 }
 
+/// Retrieves the dark theme for a dialog by walking back to the main window's
+/// `AppState` via the `GWLP_USERDATA` slot the dialog stored at creation.
+/// Returns `None` if dark mode is off or the main window is gone.
+fn dialog_dark_theme(dlg_hwnd: HWND) -> Option<TabTheme> {
+    let main = unsafe { GetWindowLongPtrW(dlg_hwnd, GWLP_USERDATA) };
+    if main == 0 {
+        return None;
+    }
+    let state = get_state(HWND(main))?;
+    if state.editor_dark {
+        Some(state.tab_host.theme)
+    } else {
+        None
+    }
+}
+
+/// Handles `WM_CTLCOLOR*` for a dialog child control. Returns the HBRUSH the
+/// system should use for the control's background, or `None` when dark mode
+/// is off (caller should fall through to `DefWindowProc`).
+fn dialog_ctl_color(dlg_hwnd: HWND, hdc: HDC, edit_like: bool) -> Option<LRESULT> {
+    let theme = dialog_dark_theme(dlg_hwnd)?;
+    let bg = if edit_like { theme.hover_bg } else { theme.bg };
+    unsafe {
+        SetTextColor(hdc, theme.fg);
+        SetBkMode(hdc, TRANSPARENT);
+    }
+    let brush = dark_mode::cached_solid_brush(bg);
+    Some(LRESULT(brush.0))
+}
+
+/// Called from dialog `WM_CREATE` once all child controls exist. Applies the
+/// title-bar dark attribute and re-themes child controls so scrollbars and
+/// borders pick up the dark variant.
+fn apply_dialog_dark_mode(dlg_hwnd: HWND) {
+    let dark = dialog_dark_theme(dlg_hwnd).is_some();
+    dark_mode::apply_to_window(dlg_hwnd, dark);
+    dark_mode::theme_child_controls(dlg_hwnd, dark);
+}
+
 fn loword(value: usize) -> u16 {
     (value & 0xffff) as u16
 }
@@ -5733,8 +5999,19 @@ fn set_editor_dark_mode(hwnd: HWND, state: &mut AppState, enabled: bool) {
     if let Err(err) = update_tab_host_theme(state, enabled) {
         logging::log_error(&format!("tab_host_theme_update_failed err={err}"));
     }
+    dark_mode::apply_to_window(hwnd, enabled);
     unsafe {
         InvalidateRect(state.tab_host.vertical_tabs, None, true);
+        InvalidateRect(state.status, None, true);
+        let _ = SetWindowPos(
+            hwnd,
+            HWND(0),
+            0,
+            0,
+            0,
+            0,
+            SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
+        );
     }
     persist_ui_settings(state);
 }
@@ -6391,7 +6668,20 @@ unsafe extern "system" fn find_wndproc(
                     let _ = SetFocus(find_edit);
                 }
             }
+            apply_dialog_dark_mode(hwnd);
             LRESULT(0)
+        }
+        WM_CTLCOLORDLG | WM_CTLCOLORSTATIC | WM_CTLCOLORBTN => {
+            if let Some(r) = dialog_ctl_color(hwnd, HDC(wparam.0 as isize), false) {
+                return r;
+            }
+            unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
+        }
+        WM_CTLCOLOREDIT | WM_CTLCOLORLISTBOX => {
+            if let Some(r) = dialog_ctl_color(hwnd, HDC(wparam.0 as isize), true) {
+                return r;
+            }
+            unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
         }
         WM_COMMAND => {
             let main_hwnd = unsafe { HWND(GetWindowLongPtrW(hwnd, GWLP_USERDATA)) };
@@ -6548,7 +6838,20 @@ unsafe extern "system" fn goto_line_wndproc(
                     let _ = SetFocus(line_edit);
                 }
             }
+            apply_dialog_dark_mode(hwnd);
             LRESULT(0)
+        }
+        WM_CTLCOLORDLG | WM_CTLCOLORSTATIC | WM_CTLCOLORBTN => {
+            if let Some(r) = dialog_ctl_color(hwnd, HDC(wparam.0 as isize), false) {
+                return r;
+            }
+            unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
+        }
+        WM_CTLCOLOREDIT | WM_CTLCOLORLISTBOX => {
+            if let Some(r) = dialog_ctl_color(hwnd, HDC(wparam.0 as isize), true) {
+                return r;
+            }
+            unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
         }
         WM_COMMAND => {
             let main_hwnd = unsafe { HWND(GetWindowLongPtrW(hwnd, GWLP_USERDATA)) };
@@ -6941,7 +7244,20 @@ unsafe extern "system" fn find_in_files_wndproc(
                 });
             }
 
+            apply_dialog_dark_mode(hwnd);
             LRESULT(0)
+        }
+        WM_CTLCOLORDLG | WM_CTLCOLORSTATIC | WM_CTLCOLORBTN => {
+            if let Some(r) = dialog_ctl_color(hwnd, HDC(wparam.0 as isize), false) {
+                return r;
+            }
+            unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
+        }
+        WM_CTLCOLOREDIT | WM_CTLCOLORLISTBOX => {
+            if let Some(r) = dialog_ctl_color(hwnd, HDC(wparam.0 as isize), true) {
+                return r;
+            }
+            unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
         }
         WM_COMMAND => {
             let main_hwnd = unsafe { HWND(GetWindowLongPtrW(hwnd, GWLP_USERDATA)) };
