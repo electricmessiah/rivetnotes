@@ -33,8 +33,24 @@ const SCI_ASSIGNCMDKEY: u32 = 2070;
 const SCI_SETMARGINS: u32 = 2252;
 const SCI_SETMARGINTYPEN: u32 = 2240;
 const SCI_SETMARGINWIDTHN: u32 = 2242;
+const SCI_SETMARGINMASKN: u32 = 2244;
+const SCI_SETMARGINSENSITIVEN: u32 = 2246;
 const SCI_SETMARGINLEFT: u32 = 2155;
 const SCI_SETMARGINRIGHT: u32 = 2157;
+const SCI_TEXTWIDTH: u32 = 2276;
+const SCI_MARKERDEFINE: u32 = 2040;
+const SCI_MARKERSETFORE: u32 = 2041;
+const SCI_MARKERSETBACK: u32 = 2042;
+const SCI_SETFOLDMARGINCOLOUR: u32 = 2290;
+const SCI_SETFOLDMARGINHICOLOUR: u32 = 2291;
+const SCI_TOGGLEFOLD: u32 = 2231;
+const SCI_GETLASTCHILD: u32 = 2224;
+const SCI_SETFOLDLEVEL: u32 = 2222;
+const SCI_GETFOLDLEVEL: u32 = 2223;
+const SCI_SETDEFAULTFOLDDISPLAYTEXT: u32 = 2722;
+const SCI_TOGGLEFOLDSHOWTEXT: u32 = 2701;
+const SCI_FOLDDISPLAYTEXTSETSTYLE: u32 = 2702;
+const SCI_SETAUTOMATICFOLD: u32 = 2663;
 const SCI_GOTOLINE: u32 = 2024;
 const SCI_GOTOPOS: u32 = 2025;
 const SCI_SETSAVEPOINT: u32 = 2014;
@@ -93,8 +109,13 @@ const SCI_SHOWLINES: u32 = 2226;
 const SCI_HIDELINES: u32 = 2227;
 const SCI_SETELEMENTCOLOUR: u32 = 2753;
 const SCI_SETINDICATORCURRENT: u32 = 2500;
+const SCI_SETINDICATORVALUE: u32 = 2502;
 const SCI_INDICATORFILLRANGE: u32 = 2504;
 const SCI_INDICATORCLEARRANGE: u32 = 2505;
+const SCI_INDICATORALLONFOR: u32 = 2506;
+const SCI_INDICATORVALUEAT: u32 = 2507;
+const SCI_INDICATORSTART: u32 = 2508;
+const SCI_INDICATOREND: u32 = 2509;
 const SCI_INDICSETUNDER: u32 = 2510;
 const SCI_INDICSETALPHA: u32 = 2523;
 const SCI_INDICSETOUTLINEALPHA: u32 = 2558;
@@ -115,7 +136,28 @@ const INDIC_STRIKE: usize = 4;
 const INDIC_ROUNDBOX: usize = 7;
 const SC_ELEMENT_HIDDEN_LINE: usize = 81;
 
+const SC_MARGIN_NUMBER: usize = 1;
+const SC_MASK_FOLDERS: isize = 0xFE00_0000_u32 as i32 as isize;
+const SC_MARK_BOXPLUS: usize = 12;
+const SC_MARK_BOXPLUSCONNECTED: usize = 13;
+const SC_MARK_BOXMINUS: usize = 14;
+const SC_MARK_BOXMINUSCONNECTED: usize = 15;
+const SC_MARK_VLINE: usize = 9;
+const SC_MARK_LCORNER: usize = 10;
+const SC_MARK_TCORNER: usize = 11;
+const SC_MARKNUM_FOLDEREND: usize = 25;
+const SC_MARKNUM_FOLDEROPENMID: usize = 26;
+const SC_MARKNUM_FOLDERMIDTAIL: usize = 27;
+const SC_MARKNUM_FOLDERTAIL: usize = 28;
+const SC_MARKNUM_FOLDERSUB: usize = 29;
+const SC_MARKNUM_FOLDER: usize = 30;
+const SC_MARKNUM_FOLDEROPEN: usize = 31;
+const SC_FOLDDISPLAYTEXT_BOXED: usize = 2;
+const SC_AUTOMATICFOLD_SHOW: usize = 0x0001;
+const SC_AUTOMATICFOLD_CHANGE: usize = 0x0004;
+
 const STYLE_DEFAULT: usize = 32;
+const STYLE_LINENUMBER: usize = 33;
 
 const SCE_C_COMMENT: usize = 1;
 const SCE_C_COMMENTLINE: usize = 2;
@@ -261,6 +303,41 @@ pub enum LexerKind {
     Xml,
     Css,
     Properties,
+    Markdown,
+}
+
+#[repr(C)]
+struct SciNotifyHeader {
+    hwnd_from: *mut c_void,
+    id_from: usize,
+    code: u32,
+}
+
+#[repr(C)]
+pub struct SciNotification {
+    nmhdr: SciNotifyHeader,
+    pub position: isize,
+    pub ch: i32,
+    pub modifiers: i32,
+    pub modification_type: i32,
+    pub text: *const c_char,
+    pub length: isize,
+    pub lines_added: isize,
+    pub message: i32,
+    pub w_param: usize,
+    pub l_param: isize,
+    pub line: isize,
+    pub fold_level_now: i32,
+    pub fold_level_prev: i32,
+    pub margin: i32,
+    pub list_type: i32,
+    pub x: i32,
+    pub y: i32,
+    pub token: i32,
+    pub annotation_lines_added: isize,
+    pub updated: i32,
+    pub list_completion_method: i32,
+    pub character_source: i32,
 }
 
 unsafe extern "C" {
@@ -287,15 +364,146 @@ pub fn initialize(hwnd: HWND) {
         SC_MOD_INSERTTEXT | SC_MOD_DELETETEXT,
         0,
     );
-    send_message(hwnd, SCI_SETMARGINS, 0, 0);
-    for margin in 0..5 {
+    send_message(hwnd, SCI_SETMARGINS, 5, 0);
+    // Margin 0: line numbers (width updated dynamically).
+    send_message(hwnd, SCI_SETMARGINTYPEN, 0, SC_MARGIN_NUMBER as isize);
+    send_message(hwnd, SCI_SETMARGINMASKN, 0, 0);
+    send_message(hwnd, SCI_SETMARGINWIDTHN, 0, 0);
+    send_message(hwnd, SCI_SETMARGINSENSITIVEN, 0, 0);
+    // Margin 1: fold markers, click-sensitive.
+    send_message(hwnd, SCI_SETMARGINTYPEN, 1, SC_MARGIN_SYMBOL as isize);
+    send_message(hwnd, SCI_SETMARGINMASKN, 1, SC_MASK_FOLDERS);
+    send_message(hwnd, SCI_SETMARGINWIDTHN, 1, 0);
+    send_message(hwnd, SCI_SETMARGINSENSITIVEN, 1, 1);
+    for margin in 2..5 {
         send_message(hwnd, SCI_SETMARGINTYPEN, margin, SC_MARGIN_SYMBOL as isize);
         send_message(hwnd, SCI_SETMARGINWIDTHN, margin, 0);
     }
     send_message(hwnd, SCI_SETMARGINLEFT, 0, 0);
     send_message(hwnd, SCI_SETMARGINRIGHT, 0, 0);
     send_message(hwnd, SCI_USEPOPUP, SC_POPUP_NEVER, 0);
+    configure_fold_markers(hwnd);
+    send_message(
+        hwnd,
+        SCI_SETAUTOMATICFOLD,
+        SC_AUTOMATICFOLD_SHOW | SC_AUTOMATICFOLD_CHANGE,
+        0,
+    );
+    send_message(
+        hwnd,
+        SCI_FOLDDISPLAYTEXTSETSTYLE,
+        SC_FOLDDISPLAYTEXT_BOXED,
+        0,
+    );
+    set_default_fold_display_text(hwnd, " \u{22EF} ");
     assign_default_command_keys(hwnd);
+}
+
+fn configure_fold_markers(hwnd: HWND) {
+    let pairs: [(usize, usize); 7] = [
+        (SC_MARKNUM_FOLDER, SC_MARK_BOXPLUS),
+        (SC_MARKNUM_FOLDEROPEN, SC_MARK_BOXMINUS),
+        (SC_MARKNUM_FOLDERSUB, SC_MARK_VLINE),
+        (SC_MARKNUM_FOLDERTAIL, SC_MARK_LCORNER),
+        (SC_MARKNUM_FOLDEREND, SC_MARK_BOXPLUSCONNECTED),
+        (SC_MARKNUM_FOLDEROPENMID, SC_MARK_BOXMINUSCONNECTED),
+        (SC_MARKNUM_FOLDERMIDTAIL, SC_MARK_TCORNER),
+    ];
+    for (marker, shape) in pairs {
+        send_message(hwnd, SCI_MARKERDEFINE, marker, shape as isize);
+    }
+}
+
+pub fn set_fold_marker_colors(hwnd: HWND, fore_rgb: u32, back_rgb: u32) {
+    for marker in [
+        SC_MARKNUM_FOLDER,
+        SC_MARKNUM_FOLDEROPEN,
+        SC_MARKNUM_FOLDERSUB,
+        SC_MARKNUM_FOLDERTAIL,
+        SC_MARKNUM_FOLDEREND,
+        SC_MARKNUM_FOLDEROPENMID,
+        SC_MARKNUM_FOLDERMIDTAIL,
+    ] {
+        send_message(hwnd, SCI_MARKERSETFORE, marker, back_rgb as isize);
+        send_message(hwnd, SCI_MARKERSETBACK, marker, fore_rgb as isize);
+    }
+    send_message(hwnd, SCI_SETFOLDMARGINCOLOUR, 1, back_rgb as isize);
+    send_message(hwnd, SCI_SETFOLDMARGINHICOLOUR, 1, back_rgb as isize);
+}
+
+pub fn set_line_number_style(hwnd: HWND, fore_rgb: u32, back_rgb: u32) {
+    send_message(hwnd, SCI_STYLESETFORE, STYLE_LINENUMBER, fore_rgb as isize);
+    send_message(hwnd, SCI_STYLESETBACK, STYLE_LINENUMBER, back_rgb as isize);
+}
+
+pub fn set_line_number_margin_width(hwnd: HWND, total_lines: usize) {
+    let digits = digit_count(total_lines.max(1)).max(3);
+    let sample: String = "9".repeat(digits);
+    let cstr = match CString::new(sample) {
+        Ok(c) => c,
+        Err(_) => return,
+    };
+    let width = send_message(
+        hwnd,
+        SCI_TEXTWIDTH,
+        STYLE_LINENUMBER,
+        cstr.as_ptr() as isize,
+    )
+    .0;
+    let padding = 8isize;
+    let final_width = (width + padding).max(20);
+    send_message(hwnd, SCI_SETMARGINWIDTHN, 0, final_width);
+}
+
+pub fn set_fold_margin_width(hwnd: HWND, width: i32) {
+    send_message(hwnd, SCI_SETMARGINWIDTHN, 1, width as isize);
+}
+
+fn digit_count(n: usize) -> usize {
+    let mut n = n;
+    let mut digits = 1usize;
+    while n >= 10 {
+        n /= 10;
+        digits += 1;
+    }
+    digits
+}
+
+pub fn toggle_fold(hwnd: HWND, line: usize) {
+    send_message(hwnd, SCI_TOGGLEFOLD, line, 0);
+}
+
+pub fn fold_last_child(hwnd: HWND, line: usize, level: i32) -> usize {
+    send_message(hwnd, SCI_GETLASTCHILD, line, level as isize).0 as usize
+}
+
+pub fn set_fold_level(hwnd: HWND, line: usize, level: u32) {
+    send_message(hwnd, SCI_SETFOLDLEVEL, line, level as isize);
+}
+
+pub fn fold_level(hwnd: HWND, line: usize) -> u32 {
+    send_message(hwnd, SCI_GETFOLDLEVEL, line, 0).0 as u32
+}
+
+pub fn set_default_fold_display_text(hwnd: HWND, text: &str) {
+    let cstr = match CString::new(text) {
+        Ok(c) => c,
+        Err(_) => return,
+    };
+    send_message(
+        hwnd,
+        SCI_SETDEFAULTFOLDDISPLAYTEXT,
+        0,
+        cstr.as_ptr() as isize,
+    );
+}
+
+pub fn toggle_fold_show_text(hwnd: HWND, line: usize, text: &str) {
+    let cstr = match CString::new(text) {
+        Ok(c) => c,
+        Err(_) => return,
+    };
+    send_message(hwnd, SCI_TOGGLEFOLDSHOWTEXT, line, cstr.as_ptr() as isize);
 }
 
 fn assign_default_command_keys(hwnd: HWND) {
@@ -338,9 +546,19 @@ pub fn apply_lexer(hwnd: HWND, lexer: LexerKind, dark: bool) {
     apply_base_theme(hwnd, dark);
     set_lexer_by_name(hwnd, lexer_name(lexer));
     clear_keywords(hwnd);
+    apply_fold_properties(hwnd);
     apply_lexer_properties(hwnd, lexer);
     apply_lexer_styles(hwnd, lexer);
     apply_lexer_keywords(hwnd, lexer);
+}
+
+fn apply_fold_properties(hwnd: HWND) {
+    set_property(hwnd, "fold", "1");
+    set_property(hwnd, "fold.compact", "0");
+    set_property(hwnd, "fold.html", "1");
+    set_property(hwnd, "fold.preprocessor", "1");
+    set_property(hwnd, "fold.comment", "1");
+    set_property(hwnd, "fold.cpp.syntax.based", "1");
 }
 
 pub fn set_text(hwnd: HWND, text: &str) -> Result<()> {
@@ -599,12 +817,32 @@ pub fn set_indicator_current(hwnd: HWND, indicator: usize) {
     send_message(hwnd, SCI_SETINDICATORCURRENT, indicator, 0);
 }
 
+pub fn set_indicator_value(hwnd: HWND, value: i32) {
+    send_message(hwnd, SCI_SETINDICATORVALUE, value as usize, 0);
+}
+
 pub fn fill_indicator_range(hwnd: HWND, start: usize, len: usize) {
     send_message(hwnd, SCI_INDICATORFILLRANGE, start, len as isize);
 }
 
 pub fn clear_indicator_range(hwnd: HWND, start: usize, len: usize) {
     send_message(hwnd, SCI_INDICATORCLEARRANGE, start, len as isize);
+}
+
+pub fn indicator_all_on_for(hwnd: HWND, pos: usize) -> u32 {
+    send_message(hwnd, SCI_INDICATORALLONFOR, pos, 0).0 as u32
+}
+
+pub fn indicator_value_at(hwnd: HWND, indicator: usize, pos: usize) -> i32 {
+    send_message(hwnd, SCI_INDICATORVALUEAT, indicator, pos as isize).0 as i32
+}
+
+pub fn indicator_start(hwnd: HWND, indicator: usize, pos: usize) -> usize {
+    send_message(hwnd, SCI_INDICATORSTART, indicator, pos as isize).0 as usize
+}
+
+pub fn indicator_end(hwnd: HWND, indicator: usize, pos: usize) -> usize {
+    send_message(hwnd, SCI_INDICATOREND, indicator, pos as isize).0 as usize
 }
 
 pub fn hide_lines(hwnd: HWND, line_start: usize, line_end: usize) {
@@ -627,7 +865,7 @@ pub fn set_hidden_line_color(hwnd: HWND, rgb: u32) {
 
 fn lexer_name(lexer: LexerKind) -> &'static str {
     match lexer {
-        LexerKind::Null => "null",
+        LexerKind::Null | LexerKind::Markdown => "null",
         LexerKind::Cpp | LexerKind::JavaScript => "cpp",
         LexerKind::Json => "json",
         LexerKind::Yaml => "yaml",
@@ -687,7 +925,7 @@ fn apply_lexer_properties(hwnd: HWND, lexer: LexerKind) {
 
 fn apply_lexer_styles(hwnd: HWND, lexer: LexerKind) {
     match lexer {
-        LexerKind::Null => {}
+        LexerKind::Null | LexerKind::Markdown => {}
         LexerKind::Cpp | LexerKind::JavaScript => {
             set_style(hwnd, SCE_C_COMMENT, COLOR_COMMENT, false, true);
             set_style(hwnd, SCE_C_COMMENTLINE, COLOR_COMMENT, false, false);
@@ -829,7 +1067,7 @@ fn set_keywords(hwnd: HWND, set: usize, words: &str) {
     send_message(hwnd, SCI_SETKEYWORDS, set, words.as_ptr() as isize);
 }
 
-fn set_property(hwnd: HWND, key: &str, value: &str) {
+pub fn set_property(hwnd: HWND, key: &str, value: &str) {
     let Ok(key) = CString::new(key) else {
         return;
     };

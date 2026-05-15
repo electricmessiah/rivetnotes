@@ -7,6 +7,40 @@ The format is based on Keep a Changelog, and this project adheres to SemVer.
 
 - TBD.
 
+## [0.4.5] - 2026-05-15
+
+- Reworked strikethrough back to an indicator-based toggle. Selecting text and
+  invoking `Strikeout` (menu, context menu, or new `Ctrl+Shift+X` accelerator)
+  now draws a clean strike line with **no `~~` characters added to the buffer**.
+  Re-invoking on already-struck text removes the strike. Strike state is
+  persisted across close+reopen via the existing `session.json` (no per-file
+  sidecar). Duplicate Tab carries strike state into the new tab.
+- Removed the v0.4.4 markdown rescan plumbing (`TIMER_MD_STRIKE`, the debounced
+  rehighlight loop, `md_strike_pending`/`md_strike_timer` state, the "Too many
+  strike matches" status flag) and the `textops/markdown_strike` module.
+  Indicator runs are written/read via the restored Scintilla
+  `SCI_INDICATOR*` query APIs.
+- Added a line-number margin on every editor. Gutter width auto-sizes from the
+  current line count via `SCI_TEXTWIDTH(STYLE_LINENUMBER, …)` and re-fits on
+  edit so the digits never clip.
+- Added a click-sensitive fold margin with plus/minus box markers (Scintilla
+  `SC_MASK_FOLDERS` on margin 1). Enabled Lexilla fold properties (`fold`,
+  `fold.compact=0`, plus html/preprocessor/comment variants) so all 9 wired
+  lexers (cpp/js/json/yaml/powershell/python/html/xml/css/props) get folds for
+  free.
+- Added Markdown heading-based folds. `.md` / `.markdown` routes to a new
+  `LexerKind::Markdown`; fold levels are recomputed on `SCN_MODIFIED` from `#`
+  through `######` depth (large-file gated). Lexer styling stays minimal for
+  now.
+- Contracted folds show inline ` ⋯ N lines ` in a boxed display style. Manual
+  `SCN_MARGINCLICK` handling calls `SCI_TOGGLEFOLDSHOWTEXT` so the count is
+  computed at toggle time. Existing `Alt+H` Hide-Lines / `Alt+Shift+H`
+  Unhide-All commands keep working alongside the new fold UI.
+- Themed gutter, line numbers, and fold markers from the existing tab/editor
+  theme so light/dark mode switches recolor everything consistently.
+- Added `/.claude` and `/agents` to `.gitignore` to stop local working
+  directories from cluttering `git status`.
+
 ## [0.4.4] - 2026-05-15
 
 - Fixed `Ctrl+S` not saving: the accelerator was bound only to `Ctrl+Shift+S`

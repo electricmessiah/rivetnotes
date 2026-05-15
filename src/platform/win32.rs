@@ -1,4 +1,3 @@
-use std::collections::HashSet;
 use std::io::BufRead;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -84,10 +83,8 @@ use crate::error::{AppError, Result};
 use crate::logging;
 use crate::platform::clipboard::{Clipboard, WinClipboard};
 use crate::textops::checkbox::{insert_checkbox_line, toggle_checkbox_line};
-use crate::textops::markdown_strike;
 use crate::textops::trim::{trim_edges_spaces_tabs, trim_line_preserve_eol};
 use regex::RegexBuilder;
-use uuid::Uuid;
 
 const IDM_FILE_NEW: u16 = 99;
 const IDM_FILE_OPEN: u16 = 100;
@@ -147,20 +144,19 @@ const IDM_HELP_ABOUT: u16 = 400;
 const TIMER_SESSION_ID: usize = 1;
 const TIMER_FIND_RESULTS: usize = 2;
 const TIMER_WORD_COUNT: usize = 3;
-const TIMER_MD_STRIKE: usize = 4;
 const WORD_COUNT_INTERVAL_MS: u32 = 250;
-const MD_STRIKE_INTERVAL_MS: u32 = 250;
 const TAB_SPLITTER_WIDTH: i32 = 4;
 const SMART_HL_INDIC: usize = 8;
-const MD_STRIKE_INDIC: usize = 10;
+const STRIKE_INDIC: usize = 9;
+const STRIKE_INDIC_VALUE: i32 = 1;
 const SMART_HL_MAX_TOKEN_LEN: usize = 128;
 const SMART_HL_MAX_MATCHES: usize = 5000;
-const MD_STRIKE_MAX_MATCHES: usize = 10_000;
 
 const SCN_SAVEPOINTREACHED: u32 = 2002;
 const SCN_SAVEPOINTLEFT: u32 = 2003;
 const SCN_UPDATEUI: u32 = 2007;
 const SCN_MODIFIED: u32 = 2008;
+const SCN_MARGINCLICK: u32 = 2010;
 
 const VK_A: u16 = 0x41;
 const VK_C: u16 = 0x43;
@@ -243,7 +239,6 @@ struct DocTab {
     last_backup_change_counter: Option<u64>,
     smart_highlight_token: Option<String>,
     smart_highlight_truncated: bool,
-    md_strike_truncated: bool,
 }
 
 struct SearchState {
@@ -386,8 +381,6 @@ struct AppState {
     icon_small: HICON,
     word_count_pending: bool,
     word_count_timer: bool,
-    md_strike_pending: HashSet<Uuid>,
-    md_strike_timer: bool,
     remember_session: bool,
     session_snapshot_periodic_backup: bool,
     backup_interval_seconds: u32,
@@ -1031,6 +1024,11 @@ fn create_accelerators() -> Result<HACCEL> {
             cmd: IDM_FILE_SAVE_ALL,
         },
         ACCEL {
+            fVirt: FVIRTKEY | FCONTROL | FSHIFT,
+            key: VK_X,
+            cmd: CMD_EDITOR_STRIKEOUT,
+        },
+        ACCEL {
             fVirt: FVIRTKEY | FCONTROL,
             key: VK_W,
             cmd: IDM_TAB_CLOSE,
@@ -1426,14 +1424,15 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                 CMD_EDITOR_STRIKEOUT => {
                     if let Some(state) = get_state(hwnd) {
                         let index = state.active;
-                        let changed = state
+                        let toggled = state
                             .docs
                             .get_mut(index)
-                            .map(|doc_tab| apply_markdown_strikeout(doc_tab.editor))
+                            .map(|doc_tab| toggle_strikethrough(doc_tab.editor))
                             .unwrap_or(false);
-                        if changed {
+                        if toggled {
                             if let Some(doc_tab) = state.docs.get_mut(index) {
-                                refresh_markdown_strike_for_doc(doc_tab);
+                                doc_tab.doc.is_dirty = true;
+                                doc_tab.change_counter = doc_tab.change_counter.saturating_add(1);
                             }
                             if let Err(err) = save_session_checkpoint(state) {
                                 logging::log_error(&format!(
@@ -1739,6 +1738,28 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                     return LRESULT(0);
                 }
 
+                if nmhdr.code == SCN_MARGINCLICK {
+                    let notif = unsafe { &*(lparam.0 as *const scintilla::SciNotification) };
+                    if notif.margin == 1 {
+                        let editor = nmhdr.hwndFrom;
+                        let line = scintilla::line_from_position(editor, notif.position as usize);
+                        let level = scintilla::fold_level(editor, line);
+                        if (level & 0x2000) != 0 {
+                            let last = scintilla::fold_last_child(editor, line, -1);
+                            let lines = last.saturating_sub(line);
+                            let label = if lines == 1 {
+                                String::from(" \u{22EF} 1 line ")
+                            } else {
+                                format!(" \u{22EF} {lines} lines ")
+                            };
+                            scintilla::toggle_fold_show_text(editor, line, &label);
+                        } else {
+                            scintilla::toggle_fold(editor, line);
+                        }
+                    }
+                    return LRESULT(0);
+                }
+
                 if nmhdr.code == SCN_UPDATEUI {
                     if let Some(state) = get_state(hwnd) {
                         if let Some(index) = doc_index_by_hwnd(state, nmhdr.hwndFrom)
@@ -1760,13 +1781,15 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                             doc_tab.doc.cursor_pos =
                                 scintilla::get_current_pos(doc_tab.editor) as i64;
                         }
-                        if let Some(index) = doc_index_by_hwnd(state, nmhdr.hwndFrom) {
-                            schedule_md_strike_rehighlight(hwnd, state, index);
-                        }
+                        let line_count = scintilla::line_count(nmhdr.hwndFrom);
+                        scintilla::set_line_number_margin_width(nmhdr.hwndFrom, line_count);
                         if let Some(index) = doc_index_by_hwnd(state, nmhdr.hwndFrom)
                             && index == state.active
                         {
                             update_smart_highlight_for_doc(state, index, true);
+                        }
+                        if let Some(index) = doc_index_by_hwnd(state, nmhdr.hwndFrom) {
+                            recompute_markdown_fold_levels(state, index);
                         }
                         schedule_word_count(hwnd, state);
                         update_status(state);
@@ -1791,10 +1814,6 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                 && let Some(state) = get_state(hwnd)
             {
                 handle_word_count_timer(hwnd, state);
-            } else if wparam.0 == TIMER_MD_STRIKE
-                && let Some(state) = get_state(hwnd)
-            {
-                handle_md_strike_timer(hwnd, state);
             }
             LRESULT(0)
         }
@@ -1838,7 +1857,6 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                 let _ = KillTimer(hwnd, TIMER_SESSION_ID);
                 let _ = KillTimer(hwnd, TIMER_FIND_RESULTS);
                 let _ = KillTimer(hwnd, TIMER_WORD_COUNT);
-                let _ = KillTimer(hwnd, TIMER_MD_STRIKE);
             }
             unsafe {
                 PostQuitMessage(0);
@@ -2015,8 +2033,6 @@ fn create_children(hwnd: HWND, instance: HINSTANCE) -> Result<AppState> {
         icon_small,
         word_count_pending: false,
         word_count_timer: false,
-        md_strike_pending: HashSet::new(),
-        md_strike_timer: false,
         remember_session: session::DEFAULT_REMEMBER_SESSION,
         session_snapshot_periodic_backup: session::DEFAULT_SESSION_SNAPSHOT_PERIODIC_BACKUP,
         backup_interval_seconds: session::DEFAULT_BACKUP_INTERVAL_SECONDS,
@@ -2248,7 +2264,7 @@ fn open_path_new_tab(
         scintilla::set_eol_mode(doc_tab.editor, eol);
     }
 
-    apply_syntax_for_doc(&mut doc_tab, state.editor_dark);
+    apply_syntax_for_doc(&doc_tab, state.editor_dark);
     let index = add_tab(state, &tab_title(&doc_tab), doc_tab)?;
     select_tab(hwnd, state, index);
     apply_large_file_mode_restrictions(hwnd, state, index);
@@ -2491,12 +2507,6 @@ fn update_status(state: &AppState) {
             }
             flags.push_str("Too many matches");
         }
-        if doc_tab.md_strike_truncated {
-            if !flags.is_empty() {
-                flags.push(' ');
-            }
-            flags.push_str("Too many strike matches");
-        }
     }
     if let Some(message) = state.status_message.as_deref() {
         if !flags.is_empty() {
@@ -2584,39 +2594,6 @@ fn handle_word_count_timer(hwnd: HWND, state: &mut AppState) {
             let _ = KillTimer(hwnd, TIMER_WORD_COUNT);
         }
         state.word_count_timer = false;
-    }
-}
-
-fn schedule_md_strike_rehighlight(hwnd: HWND, state: &mut AppState, index: usize) {
-    let Some(doc_id) = state.docs.get(index).map(|doc_tab| doc_tab.doc.id) else {
-        return;
-    };
-    state.md_strike_pending.insert(doc_id);
-    if !state.md_strike_timer {
-        unsafe {
-            let _ = SetTimer(hwnd, TIMER_MD_STRIKE, MD_STRIKE_INTERVAL_MS, None);
-        }
-        state.md_strike_timer = true;
-    }
-}
-
-fn handle_md_strike_timer(hwnd: HWND, state: &mut AppState) {
-    if !state.md_strike_pending.is_empty() {
-        let pending: Vec<Uuid> = state.md_strike_pending.drain().collect();
-        for doc_id in pending {
-            if let Some(index) = state.docs.iter().position(|doc| doc.doc.id == doc_id)
-                && let Some(doc_tab) = state.docs.get_mut(index)
-            {
-                refresh_markdown_strike_for_doc(doc_tab);
-            }
-        }
-        update_status(state);
-    }
-    if state.md_strike_timer && state.md_strike_pending.is_empty() {
-        unsafe {
-            let _ = KillTimer(hwnd, TIMER_MD_STRIKE);
-        }
-        state.md_strike_timer = false;
     }
 }
 
@@ -3721,11 +3698,64 @@ fn create_editor(parent: HWND, instance: HINSTANCE) -> Result<HWND> {
     Ok(editor)
 }
 
-fn apply_syntax_for_doc(doc_tab: &mut DocTab, dark: bool) {
+fn apply_syntax_for_doc(doc_tab: &DocTab, dark: bool) {
     let lexer = lexer_for_doc(&doc_tab.doc);
     scintilla::apply_lexer(doc_tab.editor, lexer, dark);
     apply_editor_theme_overlays(doc_tab.editor, dark);
-    refresh_markdown_strike_for_doc(doc_tab);
+    if matches!(lexer, scintilla::LexerKind::Markdown) && !doc_tab.doc.large_file_mode {
+        apply_markdown_fold_levels(doc_tab.editor);
+    }
+}
+
+fn recompute_markdown_fold_levels(state: &AppState, index: usize) {
+    let Some(doc_tab) = state.docs.get(index) else {
+        return;
+    };
+    if doc_tab.doc.large_file_mode {
+        return;
+    }
+    if !matches!(lexer_for_doc(&doc_tab.doc), scintilla::LexerKind::Markdown) {
+        return;
+    }
+    apply_markdown_fold_levels(doc_tab.editor);
+}
+
+fn apply_markdown_fold_levels(editor: HWND) {
+    const BASE: u32 = 0x400;
+    const HEADER: u32 = 0x2000;
+    let text = match scintilla::get_text(editor) {
+        Ok(t) => t,
+        Err(_) => return,
+    };
+    let line_count = scintilla::line_count(editor);
+    if line_count == 0 {
+        return;
+    }
+    let mut current_depth: u32 = 0;
+    for (line_idx, line) in text.split('\n').enumerate() {
+        if line_idx >= line_count {
+            break;
+        }
+        let trimmed = line.trim_start_matches([' ', '\t']);
+        let heading_depth = if trimmed.starts_with('#') {
+            let hashes = trimmed.bytes().take_while(|&b| b == b'#').count();
+            let after = trimmed.as_bytes().get(hashes).copied();
+            if (1..=6).contains(&hashes) && matches!(after, Some(b' ') | Some(b'\t') | None) {
+                Some(hashes as u32)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        let level = if let Some(depth) = heading_depth {
+            current_depth = depth;
+            (BASE + depth - 1) | HEADER
+        } else {
+            BASE + current_depth
+        };
+        scintilla::set_fold_level(editor, line_idx, level);
+    }
 }
 
 fn apply_editor_theme_overlays(editor: HWND, dark: bool) {
@@ -3747,7 +3777,7 @@ fn apply_editor_theme_overlays(editor: HWND, dark: bool) {
     } else {
         color_ref(155, 92, 92).0
     };
-    scintilla::configure_strike_indicator(editor, MD_STRIKE_INDIC, strike_color);
+    scintilla::configure_strike_indicator(editor, STRIKE_INDIC, strike_color);
 
     let hidden_line_color = if dark {
         color_ref(114, 160, 230).0
@@ -3755,6 +3785,28 @@ fn apply_editor_theme_overlays(editor: HWND, dark: bool) {
         color_ref(120, 120, 120).0
     };
     scintilla::set_hidden_line_color(editor, hidden_line_color);
+
+    let (gutter_fg, gutter_bg, marker_fg, marker_bg) = if dark {
+        (
+            color_ref(140, 140, 140).0,
+            color_ref(30, 30, 30).0,
+            color_ref(180, 180, 180).0,
+            color_ref(30, 30, 30).0,
+        )
+    } else {
+        (
+            color_ref(120, 120, 120).0,
+            color_ref(246, 246, 246).0,
+            color_ref(90, 90, 90).0,
+            color_ref(246, 246, 246).0,
+        )
+    };
+    scintilla::set_line_number_style(editor, gutter_fg, gutter_bg);
+    scintilla::set_fold_marker_colors(editor, marker_fg, marker_bg);
+    let line_count = scintilla::line_count(editor);
+    scintilla::set_line_number_margin_width(editor, line_count);
+    let fold_width = scale_for_dpi(editor, 16);
+    scintilla::set_fold_margin_width(editor, fold_width);
 }
 
 fn lexer_for_doc(doc: &Document) -> scintilla::LexerKind {
@@ -3783,6 +3835,7 @@ fn lexer_for_doc(doc: &Document) -> scintilla::LexerKind {
         Some("ini") | Some("cfg") | Some("conf") | Some("properties") => {
             scintilla::LexerKind::Properties
         }
+        Some("md") | Some("markdown") => scintilla::LexerKind::Markdown,
         _ => scintilla::LexerKind::Null,
     }
 }
@@ -3809,7 +3862,6 @@ fn create_doc_from_path(
         last_backup_change_counter: None,
         smart_highlight_token: None,
         smart_highlight_truncated: false,
-        md_strike_truncated: false,
     };
     load_file_into_doc(
         &mut doc_tab,
@@ -3873,7 +3925,7 @@ fn create_empty_tab(hwnd: HWND, instance: HINSTANCE, state: &mut AppState) -> Re
     let mut doc = Document::new_empty();
     doc.display_name = next_untitled_name(state);
     doc.backup_path = session::backup_path_for_id(doc.id)?;
-    let mut doc_tab = DocTab {
+    let doc_tab = DocTab {
         runtime_id: 0,
         editor,
         doc,
@@ -3884,12 +3936,11 @@ fn create_empty_tab(hwnd: HWND, instance: HINSTANCE, state: &mut AppState) -> Re
         last_backup_change_counter: None,
         smart_highlight_token: None,
         smart_highlight_truncated: false,
-        md_strike_truncated: false,
     };
     scintilla::set_eol_mode(editor, doc_tab.doc.eol);
     scintilla::set_wrap_enabled(editor, state.word_wrap_enabled);
     scintilla::set_savepoint(editor);
-    apply_syntax_for_doc(&mut doc_tab, state.editor_dark);
+    apply_syntax_for_doc(&doc_tab, state.editor_dark);
 
     let index = add_tab(state, &tab_title(&doc_tab), doc_tab)?;
     select_tab(hwnd, state, index);
@@ -3903,6 +3954,7 @@ fn duplicate_active_tab(hwnd: HWND, state: &mut AppState) -> Result<()> {
         .get(state.active)
         .ok_or_else(|| AppError::new("No active document."))?;
     let text = scintilla::get_text(source.editor)?;
+    let strike_ranges = collect_strike_ranges(source.editor);
     let instance = module_instance()?;
     let editor = create_editor(hwnd, instance)?;
     scintilla::set_text(editor, &text)?;
@@ -3928,7 +3980,7 @@ fn duplicate_active_tab(hwnd: HWND, state: &mut AppState) -> Result<()> {
     doc.backup_path = session::backup_path_for_id(doc.id)?;
     doc.is_dirty = true;
 
-    let mut doc_tab = DocTab {
+    let doc_tab = DocTab {
         runtime_id: 0,
         editor,
         doc,
@@ -3943,9 +3995,9 @@ fn duplicate_active_tab(hwnd: HWND, state: &mut AppState) -> Result<()> {
         last_backup_change_counter: None,
         smart_highlight_token: None,
         smart_highlight_truncated: false,
-        md_strike_truncated: false,
     };
-    apply_syntax_for_doc(&mut doc_tab, state.editor_dark);
+    apply_syntax_for_doc(&doc_tab, state.editor_dark);
+    restore_strike_ranges(doc_tab.editor, &strike_ranges);
 
     let index = add_tab(state, &tab_title(&doc_tab), doc_tab)?;
     select_tab(hwnd, state, index);
@@ -4129,9 +4181,6 @@ fn select_tab(hwnd: HWND, state: &mut AppState, index: usize) {
         }
     }
     clear_status_message(state);
-    if let Some(doc_tab) = state.docs.get_mut(index) {
-        refresh_markdown_strike_for_doc(doc_tab);
-    }
     update_smart_highlight_for_doc(state, index, true);
 
     update_title(hwnd, state);
@@ -4179,78 +4228,76 @@ fn show_all_lines(editor: HWND) {
     scintilla::show_lines(editor, 0, lines - 1);
 }
 
-fn apply_markdown_strikeout(editor: HWND) -> bool {
+fn toggle_strikethrough(editor: HWND) -> bool {
     let (start, end) = ordered_selection_range(editor);
     if start >= end {
         return false;
     }
 
-    let selected = match scintilla::selected_text(editor) {
-        Ok(selected) => selected,
-        Err(_) => return false,
-    };
-
-    let mut replacement = String::with_capacity(selected.len() + 4);
-    replacement.push_str("~~");
-    replacement.push_str(&selected);
-    replacement.push_str("~~");
-
-    scintilla::begin_undo_action(editor);
-    scintilla::set_target_range(editor, start, end);
-    scintilla::replace_target(editor, &replacement);
-    scintilla::set_selection(editor, start + 2, end + 2);
-    scintilla::end_undo_action(editor);
+    scintilla::set_indicator_current(editor, STRIKE_INDIC);
+    scintilla::set_indicator_value(editor, STRIKE_INDIC_VALUE);
+    if selection_fully_struck(editor, start, end) {
+        scintilla::clear_indicator_range(editor, start, end - start);
+    } else {
+        scintilla::fill_indicator_range(editor, start, end - start);
+    }
     true
 }
 
-fn clear_md_strike_indicators(editor: HWND, doc_len: usize) {
-    scintilla::set_indicator_current(editor, MD_STRIKE_INDIC);
-    scintilla::clear_indicator_range(editor, 0, doc_len);
+fn selection_fully_struck(editor: HWND, start: usize, end: usize) -> bool {
+    let mut pos = start;
+    while pos < end {
+        if scintilla::indicator_value_at(editor, STRIKE_INDIC, pos) <= 0 {
+            return false;
+        }
+        let run_end = scintilla::indicator_end(editor, STRIKE_INDIC, pos).min(end);
+        if run_end <= pos {
+            return false;
+        }
+        pos = run_end;
+    }
+    true
 }
 
-fn fill_md_strike_range(editor: HWND, start: usize, len: usize) {
-    scintilla::set_indicator_current(editor, MD_STRIKE_INDIC);
-    scintilla::fill_indicator_range(editor, start, len);
+fn collect_strike_ranges(editor: HWND) -> Vec<session::StrikeRange> {
+    let len = scintilla::get_length(editor);
+    let mut pos = 0usize;
+    let mut ranges = Vec::new();
+    while pos < len {
+        let flags = scintilla::indicator_all_on_for(editor, pos);
+        let next = scintilla::indicator_end(editor, STRIKE_INDIC, pos).min(len);
+        if (flags & (1u32 << STRIKE_INDIC)) != 0 {
+            let start = scintilla::indicator_start(editor, STRIKE_INDIC, pos).min(pos);
+            let end = next.max(pos.saturating_add(1));
+            if end > start {
+                ranges.push(session::StrikeRange {
+                    start: start as i64,
+                    end: end as i64,
+                });
+            }
+        }
+        pos = next.max(pos.saturating_add(1));
+    }
+    ranges
 }
 
-fn refresh_markdown_strike_for_doc(doc_tab: &mut DocTab) {
-    let doc_len = scintilla::get_length(doc_tab.editor);
-    clear_md_strike_indicators(doc_tab.editor, doc_len);
-    doc_tab.md_strike_truncated = false;
-    if doc_tab.doc.large_file_mode || doc_len == 0 {
+fn restore_strike_ranges(editor: HWND, ranges: &[session::StrikeRange]) {
+    let len = scintilla::get_length(editor);
+    if len == 0 || ranges.is_empty() {
         return;
     }
 
-    let mut start = 0usize;
-    let mut count = 0usize;
-    while start < doc_len {
-        let Some((match_start, match_end)) = scintilla::search_in_target(
-            doc_tab.editor,
-            markdown_strike::SEARCH_PATTERN,
-            SCFIND_REGEXP,
-            start,
-            doc_len,
-        ) else {
-            break;
-        };
-
-        if match_end <= match_start {
-            break;
+    scintilla::set_indicator_current(editor, STRIKE_INDIC);
+    scintilla::set_indicator_value(editor, STRIKE_INDIC_VALUE);
+    scintilla::clear_indicator_range(editor, 0, len);
+    for range in ranges {
+        let start = range.start.max(0) as usize;
+        let end = range.end.max(0) as usize;
+        let start = start.min(len);
+        let end = end.min(len);
+        if end > start {
+            scintilla::fill_indicator_range(editor, start, end - start);
         }
-        if match_end - match_start >= 4 {
-            let inner_start = match_start + 2;
-            let inner_end = match_end - 2;
-            if inner_end > inner_start {
-                fill_md_strike_range(doc_tab.editor, inner_start, inner_end - inner_start);
-            }
-        }
-
-        count = count.saturating_add(1);
-        if count >= MD_STRIKE_MAX_MATCHES {
-            doc_tab.md_strike_truncated = true;
-            break;
-        }
-        start = match_end;
     }
 }
 
@@ -4726,7 +4773,7 @@ fn restore_session_entry(
     );
     scintilla::set_savepoint(editor);
 
-    let mut doc_tab = DocTab {
+    let doc_tab = DocTab {
         runtime_id: 0,
         editor,
         doc,
@@ -4745,12 +4792,12 @@ fn restore_session_entry(
         },
         smart_highlight_token: None,
         smart_highlight_truncated: false,
-        md_strike_truncated: false,
     };
     if doc_tab.doc.path.is_none() {
         update_next_untitled_index_from_name(state, &doc_tab.doc.display_name);
     }
-    apply_syntax_for_doc(&mut doc_tab, state.editor_dark);
+    apply_syntax_for_doc(&doc_tab, state.editor_dark);
+    restore_strike_ranges(editor, &entry.strike_ranges);
     let index = add_tab(state, &tab_title(&doc_tab), doc_tab)?;
     if entry.cursor_pos >= 0 {
         scintilla::goto_pos(state.docs[index].editor, entry.cursor_pos as usize);
@@ -4791,7 +4838,7 @@ fn save_session_checkpoint(state: &AppState) -> Result<()> {
                 .stamp
                 .as_ref()
                 .map(|stamp| session::unix_timestamp(stamp.modified)),
-            strike_ranges: Vec::new(),
+            strike_ranges: collect_strike_ranges(doc_tab.editor),
         });
     }
 
@@ -5643,7 +5690,7 @@ fn handle_vertical_tab_custom_draw(state: &AppState, lparam: LPARAM) -> LRESULT 
 fn set_editor_dark_mode(hwnd: HWND, state: &mut AppState, enabled: bool) {
     state.editor_dark = enabled;
     update_editor_dark_menu(hwnd, enabled);
-    for doc_tab in &mut state.docs {
+    for doc_tab in &state.docs {
         apply_syntax_for_doc(doc_tab, enabled);
     }
     if let Err(err) = update_tab_host_theme(state, enabled) {

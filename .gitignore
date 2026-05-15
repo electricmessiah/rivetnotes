@@ -5,6 +5,8 @@
 /.vs
 /.vscode
 /.idea
+/.claude
+/agents
 /*.code-workspace
 *.rs.bk
 *.suo
