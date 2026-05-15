@@ -2256,6 +2256,12 @@ fn layout_children(hwnd: HWND, state: &mut AppState) {
             );
         }
     }
+    if state.tab_host.placement == TabPlacement::Top {
+        refresh_top_tab_item_size(state);
+        unsafe {
+            InvalidateRect(state.tab_host.top_tabs, None, true);
+        }
+    }
     update_status_parts(state);
 }
 

@@ -7,6 +7,17 @@ The format is based on Keep a Changelog, and this project adheres to SemVer.
 
 - TBD.
 
+## [0.4.9] - 2026-05-15
+
+- Fixed top tabs truncating filenames to "n…" at startup. Root cause:
+  `TCM_SETITEMSIZE` was called from `add_tab` during `WM_CREATE` while the
+  tab control still had 0×0 screen dimensions; Windows silently ignored the
+  size until the control was shown. Fixed by calling `refresh_top_tab_item_size`
+  (and `InvalidateRect`) from `layout_children` after `SetWindowPos` gives the
+  tab strip its real dimensions. This fires on both the initial layout and on
+  every subsequent `WM_SIZE`, so the correct item size is always applied once
+  the control is on screen.
+
 ## [0.4.8] - 2026-05-15
 
 - Bumped the per-tab max width clamp from 260 to 400 DPI-scaled px so most
