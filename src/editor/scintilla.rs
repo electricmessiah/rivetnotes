@@ -41,6 +41,11 @@ const SCI_TEXTWIDTH: u32 = 2276;
 const SCI_MARKERDEFINE: u32 = 2040;
 const SCI_MARKERSETFORE: u32 = 2041;
 const SCI_MARKERSETBACK: u32 = 2042;
+const SCI_MARKERADD: u32 = 2043;
+const SCI_MARKERDELETE: u32 = 2044;
+const SCI_MARKERDELETEALL: u32 = 2045;
+const SCI_MARKERGET: u32 = 2046;
+const SCI_GETLINEVISIBLE: u32 = 2228;
 const SCI_SETFOLDMARGINCOLOUR: u32 = 2290;
 const SCI_SETFOLDMARGINHICOLOUR: u32 = 2291;
 const SCI_TOGGLEFOLD: u32 = 2231;
@@ -138,6 +143,7 @@ const SC_ELEMENT_HIDDEN_LINE: usize = 81;
 
 const SC_MARGIN_NUMBER: usize = 1;
 const SC_MASK_FOLDERS: isize = 0xFE00_0000_u32 as i32 as isize;
+const SC_MARK_PLUS: usize = 2;
 const SC_MARK_BOXPLUS: usize = 12;
 const SC_MARK_BOXPLUSCONNECTED: usize = 13;
 const SC_MARK_BOXMINUS: usize = 14;
@@ -370,9 +376,10 @@ pub fn initialize(hwnd: HWND) {
     send_message(hwnd, SCI_SETMARGINMASKN, 0, 0);
     send_message(hwnd, SCI_SETMARGINWIDTHN, 0, 0);
     send_message(hwnd, SCI_SETMARGINSENSITIVEN, 0, 0);
-    // Margin 1: fold markers, click-sensitive.
+    // Margin 1: fold markers + user-collapse marker, click-sensitive.
     send_message(hwnd, SCI_SETMARGINTYPEN, 1, SC_MARGIN_SYMBOL as isize);
-    send_message(hwnd, SCI_SETMARGINMASKN, 1, SC_MASK_FOLDERS);
+    let fold_mask: isize = SC_MASK_FOLDERS | (1 << USER_COLLAPSE_MARKER);
+    send_message(hwnd, SCI_SETMARGINMASKN, 1, fold_mask);
     send_message(hwnd, SCI_SETMARGINWIDTHN, 1, 0);
     send_message(hwnd, SCI_SETMARGINSENSITIVEN, 1, 1);
     for margin in 2..5 {
@@ -383,6 +390,7 @@ pub fn initialize(hwnd: HWND) {
     send_message(hwnd, SCI_SETMARGINRIGHT, 0, 0);
     send_message(hwnd, SCI_USEPOPUP, SC_POPUP_NEVER, 0);
     configure_fold_markers(hwnd);
+    configure_user_collapse_marker(hwnd);
     send_message(
         hwnd,
         SCI_SETAUTOMATICFOLD,
@@ -412,6 +420,40 @@ fn configure_fold_markers(hwnd: HWND) {
     for (marker, shape) in pairs {
         send_message(hwnd, SCI_MARKERDEFINE, marker, shape as isize);
     }
+}
+
+pub const USER_COLLAPSE_MARKER: usize = 5;
+
+fn configure_user_collapse_marker(hwnd: HWND) {
+    send_message(
+        hwnd,
+        SCI_MARKERDEFINE,
+        USER_COLLAPSE_MARKER,
+        SC_MARK_PLUS as isize,
+    );
+    // Accent color so the user-collapse glyph is distinguishable from lexer fold boxes.
+    send_message(hwnd, SCI_MARKERSETFORE, USER_COLLAPSE_MARKER, 0x00C07020);
+    send_message(hwnd, SCI_MARKERSETBACK, USER_COLLAPSE_MARKER, 0x00FFFFFF);
+}
+
+pub fn marker_add(hwnd: HWND, line: usize, marker_num: usize) {
+    send_message(hwnd, SCI_MARKERADD, line, marker_num as isize);
+}
+
+pub fn marker_delete(hwnd: HWND, line: usize, marker_num: usize) {
+    send_message(hwnd, SCI_MARKERDELETE, line, marker_num as isize);
+}
+
+pub fn marker_delete_all(hwnd: HWND, marker_num: i32) {
+    send_message(hwnd, SCI_MARKERDELETEALL, marker_num as usize, 0);
+}
+
+pub fn marker_get(hwnd: HWND, line: usize) -> u32 {
+    send_message(hwnd, SCI_MARKERGET, line, 0).0 as u32
+}
+
+pub fn line_visible(hwnd: HWND, line: usize) -> bool {
+    send_message(hwnd, SCI_GETLINEVISIBLE, line, 0).0 != 0
 }
 
 pub fn set_fold_marker_colors(hwnd: HWND, fore_rgb: u32, back_rgb: u32) {

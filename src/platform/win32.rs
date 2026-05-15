@@ -7,13 +7,13 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use windows::Win32::Foundation::{
     BOOL, COLORREF, ERROR_CLASS_ALREADY_EXISTS, GetLastError, HINSTANCE, HWND, LPARAM, LRESULT,
-    POINT, WPARAM,
+    POINT, SIZE, WPARAM,
 };
 use windows::Win32::Graphics::Gdi::{
     BeginPaint, CreatePen, CreateSolidBrush, DT_END_ELLIPSIS, DT_NOPREFIX, DT_SINGLELINE,
-    DT_VCENTER, DeleteObject, DrawTextW, EndPaint, FillRect, HBRUSH, HDC, HGDIOBJ, InvalidateRect,
-    LineTo, MoveToEx, PAINTSTRUCT, PS_SOLID, ScreenToClient, SelectObject, SetBkMode, SetTextColor,
-    TRANSPARENT,
+    DT_VCENTER, DeleteObject, DrawTextW, EndPaint, FillRect, GetDC, GetTextExtentPoint32W, HBRUSH,
+    HDC, HGDIOBJ, InvalidateRect, LineTo, MoveToEx, PAINTSTRUCT, PS_SOLID, ReleaseDC,
+    ScreenToClient, SelectObject, SetBkMode, SetTextColor, TRANSPARENT,
 };
 use windows::Win32::System::Com::CoTaskMemFree;
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
@@ -32,16 +32,17 @@ use windows::Win32::UI::Controls::{
     LVS_EX_FULLROWSELECT, LVS_NOCOLUMNHEADER, LVS_REPORT, LVS_SHOWSELALWAYS, LVS_SINGLESEL,
     NM_CUSTOMDRAW, NM_RCLICK, NMHDR, NMLISTVIEW, NMLVCUSTOMDRAW, ODS_HOTLIGHT, ODS_SELECTED,
     SB_SETPARTS, SB_SETTEXTW, STATUSCLASSNAMEW, TCHITTESTINFO, TCIF_TEXT, TCITEMW, TCM_DELETEITEM,
-    TCM_GETCURSEL, TCM_GETITEMRECT, TCM_HITTEST, TCM_INSERTITEMW, TCM_SETCURSEL, TCM_SETITEMW,
-    TCN_SELCHANGE, TCS_OWNERDRAWFIXED, WC_LISTVIEWW, WC_TABCONTROLW,
+    TCM_GETCURSEL, TCM_GETITEMRECT, TCM_HITTEST, TCM_INSERTITEMW, TCM_SETCURSEL, TCM_SETITEMSIZE,
+    TCM_SETITEMW, TCN_SELCHANGE, TCS_OWNERDRAWFIXED, WC_LISTVIEWW, WC_TABCONTROLW,
 };
 use windows::Win32::UI::HiDpi::{
     DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, GetDpiForWindow, SetProcessDpiAwarenessContext,
 };
 use windows::Win32::UI::Input::KeyboardAndMouse::{ReleaseCapture, SetCapture};
 use windows::Win32::UI::Shell::{
-    BIF_NEWDIALOGSTYLE, BIF_RETURNONLYFSDIRS, BROWSEINFOW, DragAcceptFiles, DragFinish,
-    DragQueryFileW, HDROP, SHBrowseForFolderW, SHGetPathFromIDListW, ShellExecuteW,
+    BIF_NEWDIALOGSTYLE, BIF_RETURNONLYFSDIRS, BROWSEINFOW, DefSubclassProc, DragAcceptFiles,
+    DragFinish, DragQueryFileW, HDROP, RemoveWindowSubclass, SHBrowseForFolderW,
+    SHGetPathFromIDListW, SetWindowSubclass, ShellExecuteW,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     ACCEL, AppendMenuW, BM_GETCHECK, BM_SETCHECK, BS_AUTOCHECKBOX, BS_DEFPUSHBUTTON, BS_PUSHBUTTON,
@@ -62,10 +63,10 @@ use windows::Win32::UI::WindowsAndMessaging::{
     SetWindowTextW, ShowWindow, TPM_NONOTIFY, TPM_RETURNCMD, TPM_RIGHTBUTTON, TrackPopupMenu,
     TranslateAcceleratorW, TranslateMessage, WINDOW_STYLE, WM_ACTIVATEAPP, WM_CAPTURECHANGED,
     WM_CLOSE, WM_COMMAND, WM_CONTEXTMENU, WM_CREATE, WM_DESTROY, WM_DRAWITEM, WM_DROPFILES,
-    WM_GETICON, WM_INITMENUPOPUP, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONUP, WM_MOUSEMOVE,
-    WM_NCDESTROY, WM_NOTIFY, WM_PAINT, WM_SETCURSOR, WM_SETICON, WM_SIZE, WM_TIMER, WNDCLASSEXW,
-    WS_BORDER, WS_CAPTION, WS_CHILD, WS_CLIPSIBLINGS, WS_OVERLAPPEDWINDOW, WS_SYSMENU, WS_TABSTOP,
-    WS_VISIBLE, WS_VSCROLL,
+    WM_ERASEBKGND, WM_GETFONT, WM_GETICON, WM_INITMENUPOPUP, WM_LBUTTONDOWN, WM_LBUTTONUP,
+    WM_MBUTTONUP, WM_MOUSEMOVE, WM_NCDESTROY, WM_NOTIFY, WM_PAINT, WM_SETCURSOR, WM_SETICON,
+    WM_SIZE, WM_TIMER, WNDCLASSEXW, WS_BORDER, WS_CAPTION, WS_CHILD, WS_CLIPSIBLINGS,
+    WS_OVERLAPPEDWINDOW, WS_SYSMENU, WS_TABSTOP, WS_VISIBLE, WS_VSCROLL,
 };
 use windows::core::PWSTR;
 use windows::core::{HSTRING, PCWSTR, w};
@@ -129,10 +130,10 @@ const IDM_VIEW_TABS_VERTICAL_RIGHT: u16 = 343;
 const IDM_VIEW_TABS_CYCLE: u16 = 344;
 const IDM_VIEW_WORD_WRAP: u16 = 345;
 const CMD_VIEW_ALWAYS_ON_TOP: u16 = 346;
-const CMD_VIEW_HIDE_LINES: u16 = 347;
-const CMD_VIEW_UNHIDE_ALL_LINES: u16 = 348;
 const CMD_TAB_NEXT: u16 = 349;
 const CMD_TAB_PREV: u16 = 350;
+const CMD_EDITOR_COLLAPSE_SELECTION: u16 = 352;
+const CMD_EDITOR_EXPAND_ALL: u16 = 353;
 const IDM_TAB_CLOSE: u16 = 220;
 const IDM_TAB_CLOSE_OTHERS: u16 = 221;
 const IDM_TAB_CLOSE_RIGHT: u16 = 222;
@@ -767,19 +768,6 @@ fn create_menu() -> Result<HMENU> {
         AppendMenuW(
             view_menu,
             MF_STRING,
-            CMD_VIEW_HIDE_LINES as usize,
-            w!("Hide Lines"),
-        )?;
-        AppendMenuW(
-            view_menu,
-            MF_STRING,
-            CMD_VIEW_UNHIDE_ALL_LINES as usize,
-            w!("Unhide All Lines"),
-        )?;
-        AppendMenuW(view_menu, MF_SEPARATOR, 0, PCWSTR::null())?;
-        AppendMenuW(
-            view_menu,
-            MF_STRING,
             IDM_VIEW_WORD_WRAP as usize,
             w!("Word Wrap"),
         )?;
@@ -1057,16 +1045,6 @@ fn create_accelerators() -> Result<HACCEL> {
             fVirt: FVIRTKEY | FCONTROL,
             key: VK_PRIOR,
             cmd: CMD_TAB_PREV,
-        },
-        ACCEL {
-            fVirt: FVIRTKEY | FALT,
-            key: VK_H,
-            cmd: CMD_VIEW_HIDE_LINES,
-        },
-        ACCEL {
-            fVirt: FVIRTKEY | FALT | FSHIFT,
-            key: VK_H,
-            cmd: CMD_VIEW_UNHIDE_ALL_LINES,
         },
     ];
 
@@ -1506,19 +1484,19 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                     }
                     LRESULT(0)
                 }
-                CMD_VIEW_HIDE_LINES => {
+                CMD_EDITOR_COLLAPSE_SELECTION => {
                     if let Some(state) = get_state(hwnd)
                         && let Some(editor) = active_editor(state)
                     {
-                        hide_selected_or_current_lines(editor);
+                        collapse_selection_lines(editor);
                     }
                     LRESULT(0)
                 }
-                CMD_VIEW_UNHIDE_ALL_LINES => {
+                CMD_EDITOR_EXPAND_ALL => {
                     if let Some(state) = get_state(hwnd)
                         && let Some(editor) = active_editor(state)
                     {
-                        show_all_lines(editor);
+                        expand_all_user_collapses(editor);
                     }
                     LRESULT(0)
                 }
@@ -1743,6 +1721,11 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                     if notif.margin == 1 {
                         let editor = nmhdr.hwndFrom;
                         let line = scintilla::line_from_position(editor, notif.position as usize);
+                        let markers = scintilla::marker_get(editor, line);
+                        if (markers & (1u32 << scintilla::USER_COLLAPSE_MARKER)) != 0 {
+                            expand_user_collapse(editor, line);
+                            return LRESULT(0);
+                        }
                         let level = scintilla::fold_level(editor, line);
                         if (level & 0x2000) != 0 {
                             let last = scintilla::fold_last_child(editor, line, -1);
@@ -1906,6 +1889,9 @@ fn create_children(hwnd: HWND, instance: HINSTANCE) -> Result<AppState> {
     };
     if top_tabs.0 == 0 {
         return Err(AppError::win32("CreateWindowExW(TabControl)"));
+    }
+    unsafe {
+        let _ = SetWindowSubclass(top_tabs, Some(top_tabs_subclass_proc), 0, 0);
     }
 
     let vertical_tabs = unsafe {
@@ -4040,6 +4026,7 @@ fn add_tab(state: &mut AppState, title: &str, mut doc_tab: DocTab) -> Result<usi
     insert_tab_item(state.tab_host.top_tabs, index, title)?;
     state.docs.push(doc_tab);
     rebuild_vertical_tab_list(state);
+    refresh_top_tab_item_size(state);
     Ok(index)
 }
 
@@ -4081,6 +4068,7 @@ fn update_tab_text(state: &mut AppState, index: usize) {
             );
         }
         rebuild_vertical_tab_list(state);
+        refresh_top_tab_item_size(state);
     }
 }
 
@@ -4209,7 +4197,7 @@ fn ordered_selection_range(editor: HWND) -> (usize, usize) {
     if a <= b { (a, b) } else { (b, a) }
 }
 
-fn hide_selected_or_current_lines(editor: HWND) {
+fn collapse_selection_lines(editor: HWND) -> bool {
     let (start_pos, end_pos) = ordered_selection_range(editor);
     let line_start = scintilla::line_from_position(editor, start_pos);
     let line_end = if start_pos == end_pos {
@@ -4217,15 +4205,47 @@ fn hide_selected_or_current_lines(editor: HWND) {
     } else {
         scintilla::line_from_position(editor, end_pos)
     };
-    scintilla::hide_lines(editor, line_start, line_end);
+    if line_end <= line_start {
+        return false;
+    }
+    let total = scintilla::line_count(editor);
+    if line_start + 1 >= total {
+        return false;
+    }
+    let hide_end = line_end.min(total - 1);
+    scintilla::marker_add(editor, line_start, scintilla::USER_COLLAPSE_MARKER);
+    scintilla::hide_lines(editor, line_start + 1, hide_end);
+    true
 }
 
-fn show_all_lines(editor: HWND) {
-    let lines = scintilla::line_count(editor);
-    if lines == 0 {
+fn expand_user_collapse(editor: HWND, header_line: usize) {
+    let total = scintilla::line_count(editor);
+    let mut last_hidden = header_line;
+    let mut line = header_line + 1;
+    while line < total {
+        if scintilla::line_visible(editor, line) {
+            break;
+        }
+        let m = scintilla::marker_get(editor, line);
+        if (m & (1u32 << scintilla::USER_COLLAPSE_MARKER)) != 0 {
+            break;
+        }
+        last_hidden = line;
+        line += 1;
+    }
+    if last_hidden > header_line {
+        scintilla::show_lines(editor, header_line + 1, last_hidden);
+    }
+    scintilla::marker_delete(editor, header_line, scintilla::USER_COLLAPSE_MARKER);
+}
+
+fn expand_all_user_collapses(editor: HWND) {
+    let total = scintilla::line_count(editor);
+    if total == 0 {
         return;
     }
-    scintilla::show_lines(editor, 0, lines - 1);
+    scintilla::show_lines(editor, 0, total - 1);
+    scintilla::marker_delete_all(editor, scintilla::USER_COLLAPSE_MARKER as i32);
 }
 
 fn toggle_strikethrough(editor: HWND) -> bool {
@@ -4427,6 +4447,117 @@ fn tab_bar_height(state: &AppState) -> i32 {
     }
 }
 
+const TAB_ITEM_MIN_WIDTH: i32 = 120;
+const TAB_ITEM_MAX_WIDTH: i32 = 260;
+const TAB_ITEM_LABEL_PADDING: i32 = 12;
+
+unsafe extern "system" fn top_tabs_subclass_proc(
+    hwnd: HWND,
+    msg: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+    _id_subclass: usize,
+    _ref_data: usize,
+) -> LRESULT {
+    match msg {
+        WM_ERASEBKGND => {
+            let parent = unsafe { GetParent(hwnd) };
+            if let Some(state) = get_state(parent) {
+                let mut rect = windows::Win32::Foundation::RECT::default();
+                unsafe {
+                    let _ = GetClientRect(hwnd, &mut rect);
+                }
+                let brush = unsafe { CreateSolidBrush(state.tab_host.theme.bg) };
+                if brush.0 != 0 {
+                    unsafe {
+                        let _ = FillRect(HDC(wparam.0 as isize), &rect, brush);
+                        let _ = DeleteObject(brush);
+                    }
+                }
+            }
+            return LRESULT(1);
+        }
+        WM_PAINT => {
+            let result = unsafe { DefSubclassProc(hwnd, msg, wparam, lparam) };
+            let parent = unsafe { GetParent(hwnd) };
+            if let Some(state) = get_state(parent) {
+                let mut rect = windows::Win32::Foundation::RECT::default();
+                unsafe {
+                    let _ = GetClientRect(hwnd, &mut rect);
+                }
+                let bottom_h = scale_for_dpi(hwnd, 3);
+                rect.top = (rect.bottom - bottom_h).max(rect.top);
+                let hdc = unsafe { GetDC(hwnd) };
+                if hdc.0 != 0 {
+                    let brush = unsafe { CreateSolidBrush(state.tab_host.theme.bg) };
+                    if brush.0 != 0 {
+                        unsafe {
+                            let _ = FillRect(hdc, &rect, brush);
+                            let _ = DeleteObject(brush);
+                        }
+                    }
+                    unsafe {
+                        ReleaseDC(hwnd, hdc);
+                    }
+                }
+            }
+            return result;
+        }
+        WM_NCDESTROY => {
+            unsafe {
+                let _ = RemoveWindowSubclass(hwnd, Some(top_tabs_subclass_proc), 0);
+            }
+            return unsafe { DefSubclassProc(hwnd, msg, wparam, lparam) };
+        }
+        _ => {}
+    }
+    unsafe { DefSubclassProc(hwnd, msg, wparam, lparam) }
+}
+
+fn refresh_top_tab_item_size(state: &AppState) {
+    let hwnd = state.tab_host.top_tabs;
+    if hwnd.0 == 0 || state.docs.is_empty() {
+        return;
+    }
+    let hfont = unsafe { SendMessageW(hwnd, WM_GETFONT, WPARAM(0), LPARAM(0)) };
+    let hdc = unsafe { GetDC(hwnd) };
+    if hdc.0 == 0 {
+        return;
+    }
+    let restore_font = if hfont.0 != 0 {
+        let prev = unsafe { SelectObject(hdc, HGDIOBJ(hfont.0)) };
+        Some(prev)
+    } else {
+        None
+    };
+    let mut max_text_w = scale_for_dpi(hwnd, TAB_ITEM_MIN_WIDTH);
+    for doc_tab in &state.docs {
+        let title = tab_title(doc_tab);
+        let wide: Vec<u16> = title.encode_utf16().collect();
+        if wide.is_empty() {
+            continue;
+        }
+        let mut size = SIZE { cx: 0, cy: 0 };
+        unsafe {
+            let _ = GetTextExtentPoint32W(hdc, &wide, &mut size);
+        }
+        max_text_w = max_text_w.max(size.cx);
+    }
+    if let Some(prev) = restore_font {
+        unsafe { SelectObject(hdc, prev) };
+    }
+    unsafe { ReleaseDC(hwnd, hdc) };
+    let close_reserve = scale_for_dpi(hwnd, TAB_CLOSE_BTN_SIZE + TAB_CLOSE_BTN_MARGIN * 2);
+    let padding = scale_for_dpi(hwnd, TAB_ITEM_LABEL_PADDING * 2);
+    let max_clamp = scale_for_dpi(hwnd, TAB_ITEM_MAX_WIDTH);
+    let item_w = (max_text_w + padding + close_reserve).min(max_clamp);
+    let item_h = tab_bar_height(state);
+    let dim = ((item_h as isize) << 16) | (item_w as isize & 0xFFFF);
+    unsafe {
+        SendMessageW(hwnd, TCM_SETITEMSIZE, WPARAM(0), LPARAM(dim));
+    }
+}
+
 fn tab_index_at_point(tabs: HWND, count: usize, point: LPARAM) -> Option<usize> {
     let x = lparam_x(point);
     let y = lparam_y(point);
@@ -4554,6 +4685,7 @@ fn close_tab(hwnd: HWND, state: &mut AppState, index: usize) -> Result<bool> {
 
     let new_index = state.active.min(state.docs.len().saturating_sub(1));
     select_tab(hwnd, state, new_index);
+    refresh_top_tab_item_size(state);
     if let Err(err) = save_session_checkpoint(state) {
         logging::log_error(&format!("session_save_after_tab_close_failed err={err}"));
     }
@@ -5345,6 +5477,19 @@ fn show_editor_context_menu(hwnd: HWND, editor: HWND, x: i32, y: i32) -> Option<
             CMD_INSERT_CHECKBOX as usize,
             w!("Place Checkbox"),
         );
+        let _ = AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null());
+        let _ = AppendMenuW(
+            menu,
+            MF_STRING,
+            CMD_EDITOR_COLLAPSE_SELECTION as usize,
+            w!("Collapse Selection"),
+        );
+        let _ = AppendMenuW(
+            menu,
+            MF_STRING,
+            CMD_EDITOR_EXPAND_ALL as usize,
+            w!("Expand All Collapsed"),
+        );
         let has_selection = !scintilla::selection_empty(editor);
         let sel_start = scintilla::selection_start(editor) as i64;
         let sel_end = scintilla::selection_end(editor) as i64;
@@ -5399,6 +5544,16 @@ fn show_editor_context_menu(hwnd: HWND, editor: HWND, x: i32, y: i32) -> Option<
         let _ = EnableMenuItem(menu, CMD_TOGGLE_CHECKBOX as u32, checkbox_flags);
         let _ = EnableMenuItem(menu, CMD_INSERT_CHECKBOX as u32, checkbox_flags);
         let _ = EnableMenuItem(menu, CMD_EDITOR_STRIKEOUT as u32, strike_flags);
+        let collapse_flags = {
+            let line_start = scintilla::line_from_position(editor, sel_start.max(0) as usize);
+            let line_end = scintilla::line_from_position(editor, sel_end.max(0) as usize);
+            if has_selection && line_end > line_start {
+                MF_BYCOMMAND | MF_ENABLED
+            } else {
+                MF_BYCOMMAND | MF_GRAYED
+            }
+        };
+        let _ = EnableMenuItem(menu, CMD_EDITOR_COLLAPSE_SELECTION as u32, collapse_flags);
     }
     let selected = unsafe {
         TrackPopupMenu(

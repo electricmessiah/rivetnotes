@@ -7,6 +7,29 @@ The format is based on Keep a Changelog, and this project adheres to SemVer.
 
 - TBD.
 
+## [0.4.6] - 2026-05-15
+
+- Replaced the Hide-Lines / Unhide-All commands with a **Collapse Selection**
+  feature available from the editor's right-click context menu. Highlight any
+  block of lines, choose `Collapse Selection`, and the first selected line
+  stays visible with a clickable `+` marker in the fold gutter; everything
+  below it is hidden. Click the `+` to expand. `Expand All Collapsed` in the
+  same context menu restores every user-collapsed block in one shot.
+- Removed the old `View -> Hide Lines` / `View -> Unhide All Lines` menu items
+  and their `Alt+H` / `Alt+Shift+H` accelerators. The underlying
+  `SCI_HIDELINES` plumbing is reused by the new collapse path.
+- Fixed top tabs truncating to `n...` — every tab now sizes to fit its
+  filename (clamped 120-260 DPI-scaled px). Width recomputes on tab open,
+  close, rename, and dirty-flag toggle.
+- Removed the lighter "buffer bar" beneath the tab strip by subclassing the
+  top tab control to paint `WM_ERASEBKGND` and the bottom 3-px seam with the
+  active tab theme background. The tab row now meets the editor cleanly in
+  both light and dark mode.
+- Internal: new Scintilla wrappers for `SCI_MARKERADD` / `DELETE` /
+  `DELETEALL` / `GET` and `SCI_GETLINEVISIBLE`; new
+  `USER_COLLAPSE_MARKER` (#5) with `SC_MARK_PLUS` shape; fold-margin mask
+  extended to render it alongside the lexer fold markers.
+
 ## [0.4.5] - 2026-05-15
 
 - Reworked strikethrough back to an indicator-based toggle. Selecting text and
