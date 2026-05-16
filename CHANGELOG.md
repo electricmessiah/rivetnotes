@@ -7,6 +7,18 @@ The format is based on Keep a Changelog, and this project adheres to SemVer.
 
 - TBD.
 
+## [0.4.14] - 2026-05-15
+
+- Fixed the vertical tab strip (Left / Right placement) rendering completely
+  invisible after v0.4.13. v0.4.13 called `dark_mode::disable_visual_styles`
+  on the `WC_LISTVIEWW` to match the v0.4.11 trick used on `WC_TABCONTROLW`,
+  but ListViews in `LVS_REPORT` mode rely on visual styles for item layout
+  and stripping them collapses row heights so nothing draws. Reverted just
+  that one call. The v0.4.13 self-contained `CDDS_ITEMPREPAINT` paint with
+  `CDRF_SKIPDEFAULT` is kept — that's what actually stops comctl32 from
+  drawing themed selection chrome over our paint, and it works correctly
+  with visual styles left on for ListViews.
+
 ## [0.4.13] - 2026-05-15
 
 - Fixed the **Left / Right** vertical tab strip ignoring dark mode: every row

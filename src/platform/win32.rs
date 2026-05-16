@@ -2018,9 +2018,11 @@ fn create_children(hwnd: HWND, instance: HINSTANCE) -> Result<AppState> {
             LPARAM((LVS_EX_FULLROWSELECT | LVS_EX_DOUBLEBUFFER) as isize),
         );
     }
-    // Same trick as top_tabs: strip the Explorer theme so comctl32 stops
-    // drawing themed selection/hot rectangles over our NM_CUSTOMDRAW paint.
-    dark_mode::disable_visual_styles(vertical_tabs);
+    // Do NOT call dark_mode::disable_visual_styles on this ListView — unlike
+    // WC_TABCONTROLW, a WC_LISTVIEWW in LVS_REPORT mode relies on visual
+    // styles for item layout, and stripping them collapses item heights so
+    // rows render invisible. CDRF_SKIPDEFAULT in handle_vertical_tab_custom_draw
+    // is sufficient to prevent comctl32 from drawing chrome over our paint.
 
     let mut column = LVCOLUMNW {
         mask: LVCF_WIDTH,
