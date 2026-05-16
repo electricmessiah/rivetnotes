@@ -11,9 +11,9 @@ use windows::Win32::Foundation::{
 };
 use windows::Win32::Graphics::Gdi::{
     BeginPaint, CreatePen, CreateSolidBrush, DT_CENTER, DT_END_ELLIPSIS, DT_HIDEPREFIX,
-    DT_NOPREFIX, DT_SINGLELINE, DT_VCENTER, DeleteObject, DrawTextW, EndPaint, FillRect, GetDC,
-    HBRUSH, HDC, HGDIOBJ, InvalidateRect, LineTo, MoveToEx, PAINTSTRUCT, PS_SOLID, ReleaseDC,
-    ScreenToClient, SelectObject, SetBkMode, SetTextColor, TRANSPARENT,
+    DT_NOPREFIX, DT_SINGLELINE, DT_VCENTER, DeleteObject, DrawTextW, EndPaint, FillRect, HBRUSH,
+    HDC, HGDIOBJ, InvalidateRect, LineTo, MoveToEx, PAINTSTRUCT, PS_SOLID, ScreenToClient,
+    SelectObject, SetBkMode, SetTextColor, TRANSPARENT,
 };
 use windows::Win32::System::Com::CoTaskMemFree;
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
@@ -23,19 +23,18 @@ use windows::Win32::UI::Controls::Dialogs::{
 };
 use windows::Win32::UI::Controls::{
     CDDS_ITEMPOSTPAINT, CDDS_ITEMPREPAINT, CDDS_PREPAINT, CDIS_HOT, CDIS_SELECTED, CDRF_DODEFAULT,
-    CDRF_NEWFONT, CDRF_NOTIFYITEMDRAW, CDRF_NOTIFYPOSTPAINT, CDRF_SKIPDEFAULT,
-    ICC_LISTVIEW_CLASSES, ICC_WIN95_CLASSES, INITCOMMONCONTROLSEX, InitCommonControlsEx,
-    LIST_VIEW_ITEM_STATE_FLAGS, LVCF_WIDTH, LVCOLUMNW, LVHITTESTINFO, LVIF_PARAM, LVIF_TEXT,
-    LVIS_FOCUSED, LVIS_SELECTED, LVITEMW, LVM_DELETEALLITEMS, LVM_GETITEMRECT, LVM_HITTEST,
-    LVM_INSERTCOLUMNW, LVM_INSERTITEMW, LVM_SETBKCOLOR, LVM_SETCOLUMNWIDTH,
-    LVM_SETEXTENDEDLISTVIEWSTYLE, LVM_SETITEMSTATE, LVM_SETTEXTBKCOLOR, LVM_SETTEXTCOLOR,
-    LVN_ITEMCHANGED, LVS_EX_DOUBLEBUFFER, LVS_EX_FULLROWSELECT, LVS_NOCOLUMNHEADER, LVS_REPORT,
-    LVS_SHOWSELALWAYS, LVS_SINGLESEL, NM_CUSTOMDRAW, NM_RCLICK, NMCUSTOMDRAW, NMHDR, NMLISTVIEW,
-    NMLVCUSTOMDRAW, ODS_HOTLIGHT, ODS_INACTIVE, ODS_NOACCEL, ODS_SELECTED, SB_GETPARTS, SB_GETRECT,
-    SB_GETTEXTLENGTHW, SB_GETTEXTW, SB_SETPARTS, SB_SETTEXTW, STATUSCLASSNAMEW, TCHITTESTINFO,
-    TCIF_TEXT, TCITEMW, TCM_DELETEITEM, TCM_GETCURSEL, TCM_GETITEMRECT, TCM_HITTEST,
-    TCM_INSERTITEMW, TCM_SETCURSEL, TCM_SETITEMW, TCM_SETMINTABWIDTH, TCM_SETPADDING,
-    TCN_SELCHANGE, WC_LISTVIEWW, WC_TABCONTROLW,
+    CDRF_NEWFONT, CDRF_NOTIFYITEMDRAW, CDRF_NOTIFYPOSTPAINT, ICC_LISTVIEW_CLASSES,
+    ICC_WIN95_CLASSES, INITCOMMONCONTROLSEX, InitCommonControlsEx, LIST_VIEW_ITEM_STATE_FLAGS,
+    LVCF_WIDTH, LVCOLUMNW, LVHITTESTINFO, LVIF_PARAM, LVIF_TEXT, LVIS_FOCUSED, LVIS_SELECTED,
+    LVITEMW, LVM_DELETEALLITEMS, LVM_GETITEMRECT, LVM_HITTEST, LVM_INSERTCOLUMNW, LVM_INSERTITEMW,
+    LVM_SETBKCOLOR, LVM_SETCOLUMNWIDTH, LVM_SETEXTENDEDLISTVIEWSTYLE, LVM_SETITEMSTATE,
+    LVM_SETTEXTBKCOLOR, LVM_SETTEXTCOLOR, LVN_ITEMCHANGED, LVS_EX_DOUBLEBUFFER,
+    LVS_EX_FULLROWSELECT, LVS_NOCOLUMNHEADER, LVS_REPORT, LVS_SHOWSELALWAYS, LVS_SINGLESEL,
+    NM_CUSTOMDRAW, NM_RCLICK, NMHDR, NMLISTVIEW, NMLVCUSTOMDRAW, ODS_HOTLIGHT, ODS_INACTIVE,
+    ODS_NOACCEL, ODS_SELECTED, SB_GETPARTS, SB_GETRECT, SB_GETTEXTLENGTHW, SB_GETTEXTW,
+    SB_SETPARTS, SB_SETTEXTW, STATUSCLASSNAMEW, TCHITTESTINFO, TCIF_TEXT, TCITEMW, TCM_DELETEITEM,
+    TCM_GETCURSEL, TCM_GETITEMCOUNT, TCM_GETITEMRECT, TCM_HITTEST, TCM_INSERTITEMW, TCM_SETCURSEL,
+    TCM_SETITEMW, TCM_SETMINTABWIDTH, TCM_SETPADDING, TCN_SELCHANGE, WC_LISTVIEWW, WC_TABCONTROLW,
 };
 use windows::Win32::UI::HiDpi::{
     DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, GetDpiForWindow, SetProcessDpiAwarenessContext,
@@ -1767,10 +1766,6 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                     {
                         return handle_vertical_tab_custom_draw(state, lparam);
                     }
-
-                    if nmhdr.hwndFrom == state.tab_host.top_tabs && nmhdr.code == NM_CUSTOMDRAW {
-                        return handle_top_tab_custom_draw(state, lparam);
-                    }
                 }
 
                 if nmhdr.code == SCN_SAVEPOINTLEFT || nmhdr.code == SCN_SAVEPOINTREACHED {
@@ -1963,9 +1958,9 @@ fn create_children(hwnd: HWND, instance: HINSTANCE) -> Result<AppState> {
     }
     unsafe {
         let _ = SetWindowSubclass(top_tabs, Some(top_tabs_subclass_proc), 0, 0);
-        // Visual styles paint the standard light-themed tabs even when our
-        // NM_CUSTOMDRAW handler returns CDRF_SKIPDEFAULT. Strip them so the
-        // theme background, hover/selected states, and close × actually show.
+        // Strip visual styles so the subclass's WM_PAINT takes full control;
+        // otherwise comctl32 paints the standard light-themed tabs first and
+        // we can only paint over a small portion (background + bottom seam).
         dark_mode::disable_visual_styles(top_tabs);
         let pad_x = scale_for_dpi(
             top_tabs,
@@ -4497,30 +4492,23 @@ unsafe extern "system" fn top_tabs_subclass_proc(
             return LRESULT(1);
         }
         WM_PAINT => {
-            let result = unsafe { DefSubclassProc(hwnd, msg, wparam, lparam) };
+            // SysTabControl32 does not reliably honor NM_CUSTOMDRAW for full
+            // item paint, so we bypass it: handle WM_PAINT directly and walk
+            // the tabs ourselves. This is what gives us dark-theme tabs and a
+            // visible close ×.
             let parent = unsafe { GetParent(hwnd) };
-            if let Some(state) = get_state(parent) {
-                let mut rect = windows::Win32::Foundation::RECT::default();
+            let Some(state) = get_state(parent) else {
+                return unsafe { DefSubclassProc(hwnd, msg, wparam, lparam) };
+            };
+            let mut ps = PAINTSTRUCT::default();
+            let hdc = unsafe { BeginPaint(hwnd, &mut ps) };
+            if hdc.0 != 0 {
+                paint_top_tab_strip(hwnd, hdc, state);
                 unsafe {
-                    let _ = GetClientRect(hwnd, &mut rect);
-                }
-                let bottom_h = scale_for_dpi(hwnd, 3);
-                rect.top = (rect.bottom - bottom_h).max(rect.top);
-                let hdc = unsafe { GetDC(hwnd) };
-                if hdc.0 != 0 {
-                    let brush = unsafe { CreateSolidBrush(state.tab_host.theme.bg) };
-                    if brush.0 != 0 {
-                        unsafe {
-                            let _ = FillRect(hdc, &rect, brush);
-                            let _ = DeleteObject(brush);
-                        }
-                    }
-                    unsafe {
-                        ReleaseDC(hwnd, hdc);
-                    }
+                    let _ = EndPaint(hwnd, &ps);
                 }
             }
-            return result;
+            return LRESULT(0);
         }
         WM_NCDESTROY => {
             unsafe {
@@ -5869,67 +5857,112 @@ fn draw_close_glyph(hdc: HDC, rect: windows::Win32::Foundation::RECT, fg: COLORR
     }
 }
 
-fn handle_top_tab_custom_draw(state: &AppState, lparam: LPARAM) -> LRESULT {
-    let draw = unsafe { &*(lparam.0 as *const NMCUSTOMDRAW) };
-    match draw.dwDrawStage {
-        CDDS_PREPAINT => LRESULT(CDRF_NOTIFYITEMDRAW as isize),
-        CDDS_ITEMPREPAINT => {
-            let index = draw.dwItemSpec;
-            let Some(doc_tab) = state.docs.get(index) else {
-                return LRESULT(CDRF_DODEFAULT as isize);
-            };
-            let item_state = draw.uItemState.0;
-            let selected = (item_state & CDIS_SELECTED.0) != 0;
-            let hot = (item_state & CDIS_HOT.0) != 0
-                || state.tab_host.hot_in_top && state.tab_host.hot_tab == Some(index);
-            let (fill, fg) = if selected {
-                (
-                    state.tab_host.theme.selection_bg,
-                    state.tab_host.theme.selection_fg,
-                )
-            } else if hot {
-                (state.tab_host.theme.hover_bg, state.tab_host.theme.fg)
-            } else {
-                (state.tab_host.theme.bg, state.tab_host.theme.fg)
-            };
-            let hdc = draw.hdc;
-            let rect = draw.rc;
-            unsafe {
-                let brush = CreateSolidBrush(fill);
-                if brush.0 != 0 {
-                    FillRect(hdc, &rect, brush);
-                    let _ = DeleteObject(brush);
-                }
-            }
-            let close_rect = tab_close_rect(state.tab_host.top_tabs, rect);
-            let pad = scale_for_dpi(state.tab_host.top_tabs, 8);
-            let mut text_rect = windows::Win32::Foundation::RECT {
-                left: rect.left + pad,
-                top: rect.top,
-                right: (close_rect.left - pad).max(rect.left + pad),
-                bottom: rect.bottom,
-            };
-            let title = tab_title(doc_tab);
-            let mut wide: Vec<u16> = title.encode_utf16().collect();
-            unsafe {
-                SetBkMode(hdc, TRANSPARENT);
-                SetTextColor(hdc, fg);
-                if !wide.is_empty() {
-                    DrawTextW(
-                        hdc,
-                        &mut wide,
-                        &mut text_rect,
-                        DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS | DT_NOPREFIX,
-                    );
-                }
-            }
-            let close_hot = state.tab_host.hot_in_top
-                && state.tab_host.hot_tab == Some(index)
-                && state.tab_host.hot_close;
-            draw_close_glyph(hdc, close_rect, fg, close_hot);
-            LRESULT(CDRF_SKIPDEFAULT as isize)
+fn paint_top_tab_strip(hwnd: HWND, hdc: HDC, state: &AppState) {
+    let mut client = windows::Win32::Foundation::RECT::default();
+    unsafe {
+        let _ = GetClientRect(hwnd, &mut client);
+        let bg = CreateSolidBrush(state.tab_host.theme.bg);
+        if bg.0 != 0 {
+            let _ = FillRect(hdc, &client, bg);
+            let _ = DeleteObject(bg);
         }
-        _ => LRESULT(CDRF_DODEFAULT as isize),
+    }
+
+    let selected = unsafe { SendMessageW(hwnd, TCM_GETCURSEL, WPARAM(0), LPARAM(0)).0 } as i32;
+    let count = unsafe { SendMessageW(hwnd, TCM_GETITEMCOUNT, WPARAM(0), LPARAM(0)).0 } as usize;
+
+    let hfont = unsafe { SendMessageW(hwnd, WM_GETFONT, WPARAM(0), LPARAM(0)).0 };
+    let restore_font = if hfont != 0 {
+        Some(unsafe { SelectObject(hdc, HGDIOBJ(hfont)) })
+    } else {
+        None
+    };
+
+    for index in 0..count {
+        let mut rect = windows::Win32::Foundation::RECT::default();
+        let got = unsafe {
+            SendMessageW(
+                hwnd,
+                TCM_GETITEMRECT,
+                WPARAM(index),
+                LPARAM(&mut rect as *mut _ as isize),
+            )
+            .0
+        };
+        if got == 0 {
+            continue;
+        }
+        let Some(doc_tab) = state.docs.get(index) else {
+            continue;
+        };
+        let is_selected = index as i32 == selected;
+        let hot =
+            state.tab_host.hot_in_top && state.tab_host.hot_tab == Some(index) && !is_selected;
+        let (fill, fg) = if is_selected {
+            (
+                state.tab_host.theme.selection_bg,
+                state.tab_host.theme.selection_fg,
+            )
+        } else if hot {
+            (state.tab_host.theme.hover_bg, state.tab_host.theme.fg)
+        } else {
+            (state.tab_host.theme.bg, state.tab_host.theme.fg)
+        };
+        unsafe {
+            let brush = CreateSolidBrush(fill);
+            if brush.0 != 0 {
+                let _ = FillRect(hdc, &rect, brush);
+                let _ = DeleteObject(brush);
+            }
+        }
+        let close_rect = tab_close_rect(hwnd, rect);
+        let pad = scale_for_dpi(hwnd, 8);
+        let mut text_rect = windows::Win32::Foundation::RECT {
+            left: rect.left + pad,
+            top: rect.top,
+            right: (close_rect.left - pad).max(rect.left + pad),
+            bottom: rect.bottom,
+        };
+        let title = tab_title(doc_tab);
+        let mut wide: Vec<u16> = title.encode_utf16().collect();
+        unsafe {
+            SetBkMode(hdc, TRANSPARENT);
+            SetTextColor(hdc, fg);
+            if !wide.is_empty() {
+                DrawTextW(
+                    hdc,
+                    &mut wide,
+                    &mut text_rect,
+                    DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS | DT_NOPREFIX,
+                );
+            }
+        }
+        let close_hot = state.tab_host.hot_in_top
+            && state.tab_host.hot_tab == Some(index)
+            && state.tab_host.hot_close;
+        draw_close_glyph(hdc, close_rect, fg, close_hot);
+    }
+
+    if let Some(prev) = restore_font {
+        unsafe {
+            SelectObject(hdc, prev);
+        }
+    }
+
+    // Bottom seam to hide the tab control's default border.
+    let bottom_h = scale_for_dpi(hwnd, 3);
+    let seam = windows::Win32::Foundation::RECT {
+        left: client.left,
+        top: (client.bottom - bottom_h).max(client.top),
+        right: client.right,
+        bottom: client.bottom,
+    };
+    unsafe {
+        let brush = CreateSolidBrush(state.tab_host.theme.bg);
+        if brush.0 != 0 {
+            let _ = FillRect(hdc, &seam, brush);
+            let _ = DeleteObject(brush);
+        }
     }
 }
 

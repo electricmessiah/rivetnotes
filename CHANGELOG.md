@@ -7,6 +7,22 @@ The format is based on Keep a Changelog, and this project adheres to SemVer.
 
 - TBD.
 
+## [0.4.12] - 2026-05-15
+
+- Fully took over top tab painting from `WM_PAINT` in the existing
+  `top_tabs_subclass_proc` instead of trying to coax `NM_CUSTOMDRAW` into
+  rendering on a `SysTabControl32`. v0.4.11 stripped visual styles, but
+  comctl32 still never delivered useful `CDDS_ITEMPREPAINT` notifications,
+  so the strip rendered with the default light theme and the close `×` was
+  invisible. The new `paint_top_tab_strip` walks tabs via `TCM_GETITEMCOUNT`
+  + `TCM_GETITEMRECT`, paints background / hover / selected per item using
+  the cached tab theme, draws the filename, and renders the close `×` —
+  giving us a real dark tab strip with a visible close glyph that brightens
+  on hover.
+- Removed the now-dead `handle_top_tab_custom_draw` and the matching
+  `NM_CUSTOMDRAW` arm in `WM_NOTIFY`, plus the unused `NMCUSTOMDRAW`,
+  `CDRF_SKIPDEFAULT`, `GetDC`, `ReleaseDC` imports.
+
 ## [0.4.11] - 2026-05-15
 
 - Fixed top tab strip ignoring dark mode and showing an invisible close `×`
