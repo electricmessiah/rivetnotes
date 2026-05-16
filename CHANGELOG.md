@@ -7,6 +7,23 @@ The format is based on Keep a Changelog, and this project adheres to SemVer.
 
 - TBD.
 
+## [0.4.15] - 2026-05-15
+
+- Restored visibility of the Left / Right vertical tab strip (broken in
+  v0.4.13, still broken after the v0.4.14 partial revert). Rolled
+  `handle_vertical_tab_custom_draw` back to the v0.4.12 painting model
+  (`CDRF_NEWFONT | CDRF_NOTIFYPOSTPAINT` at `CDDS_ITEMPREPAINT`, close glyph
+  in `CDDS_ITEMPOSTPAINT`) — letting comctl32 draw the row text again is
+  what brings the rows back. The v0.4.13 attempt to fully self-paint and
+  return `CDRF_SKIPDEFAULT` reliably produces a blank ListView on the
+  `LVS_REPORT + LVS_NOCOLUMNHEADER + LVS_EX_FULLROWSELECT` configuration.
+- Fixed the "all tabs appear highlighted" bug at the same time by replacing
+  `NMLVCUSTOMDRAW.nmcd.uItemState & CDIS_SELECTED` (which is unreliable for
+  ListView item state — `CDIS_SELECTED = 1` collides with `LVIS_FOCUSED = 1`)
+  with a direct `doc_index == state.active` test. The active doc index is
+  the authoritative source of "which tab is selected" used everywhere else
+  in the codebase, so only one row paints with `selection_bg` now.
+
 ## [0.4.14] - 2026-05-15
 
 - Fixed the vertical tab strip (Left / Right placement) rendering completely

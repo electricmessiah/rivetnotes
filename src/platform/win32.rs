@@ -22,10 +22,10 @@ use windows::Win32::UI::Controls::Dialogs::{
     OFN_OVERWRITEPROMPT, OFN_PATHMUSTEXIST, OPENFILENAMEW,
 };
 use windows::Win32::UI::Controls::{
-    CDDS_ITEMPREPAINT, CDDS_PREPAINT, CDIS_HOT, CDIS_SELECTED, CDRF_DODEFAULT, CDRF_NOTIFYITEMDRAW,
-    CDRF_SKIPDEFAULT, ICC_LISTVIEW_CLASSES, ICC_WIN95_CLASSES, INITCOMMONCONTROLSEX,
-    InitCommonControlsEx, LIST_VIEW_ITEM_STATE_FLAGS, LVCF_WIDTH, LVCOLUMNW, LVHITTESTINFO,
-    LVIF_PARAM, LVIF_TEXT, LVIS_FOCUSED, LVIS_SELECTED, LVITEMW, LVM_DELETEALLITEMS,
+    CDDS_ITEMPOSTPAINT, CDDS_ITEMPREPAINT, CDDS_PREPAINT, CDRF_DODEFAULT, CDRF_NEWFONT,
+    CDRF_NOTIFYITEMDRAW, CDRF_NOTIFYPOSTPAINT, ICC_LISTVIEW_CLASSES, ICC_WIN95_CLASSES,
+    INITCOMMONCONTROLSEX, InitCommonControlsEx, LIST_VIEW_ITEM_STATE_FLAGS, LVCF_WIDTH, LVCOLUMNW,
+    LVHITTESTINFO, LVIF_PARAM, LVIF_TEXT, LVIS_FOCUSED, LVIS_SELECTED, LVITEMW, LVM_DELETEALLITEMS,
     LVM_GETITEMRECT, LVM_HITTEST, LVM_INSERTCOLUMNW, LVM_INSERTITEMW, LVM_SETBKCOLOR,
     LVM_SETCOLUMNWIDTH, LVM_SETEXTENDEDLISTVIEWSTYLE, LVM_SETITEMSTATE, LVM_SETTEXTBKCOLOR,
     LVM_SETTEXTCOLOR, LVN_ITEMCHANGED, LVS_EX_DOUBLEBUFFER, LVS_EX_FULLROWSELECT,
@@ -5972,94 +5972,51 @@ fn paint_top_tab_strip(hwnd: HWND, hdc: HDC, state: &AppState) {
 }
 
 fn handle_vertical_tab_custom_draw(state: &AppState, lparam: LPARAM) -> LRESULT {
-    let draw = unsafe { &*(lparam.0 as *const NMLVCUSTOMDRAW) };
+    let draw = unsafe { &mut *(lparam.0 as *mut NMLVCUSTOMDRAW) };
     if draw.nmcd.dwDrawStage == CDDS_PREPAINT {
         return LRESULT(CDRF_NOTIFYITEMDRAW as isize);
     }
-    if draw.nmcd.dwDrawStage != CDDS_ITEMPREPAINT {
-        return LRESULT(CDRF_DODEFAULT as isize);
-    }
-
-    let item_index = draw.nmcd.dwItemSpec;
-    let doc_index = doc_index_by_runtime_id(state, draw.nmcd.lItemlParam).unwrap_or(item_index);
-    let Some(doc_tab) = state.docs.get(doc_index) else {
-        return LRESULT(CDRF_DODEFAULT as isize);
-    };
-
-    let item_state = draw.nmcd.uItemState.0;
-    let is_selected = (item_state & CDIS_SELECTED.0) != 0;
-    let is_hot = !is_selected
-        && ((item_state & CDIS_HOT.0) != 0 || state.tab_host.hot_tab == Some(item_index));
-    let (fg, fill) = if is_selected {
-        (
-            state.tab_host.theme.selection_fg,
-            state.tab_host.theme.selection_bg,
-        )
-    } else if is_hot {
-        (state.tab_host.theme.fg, state.tab_host.theme.hover_bg)
-    } else {
-        (state.tab_host.theme.fg, state.tab_host.theme.bg)
-    };
-
-    let hdc = draw.nmcd.hdc;
-    let rect = draw.nmcd.rc;
-    unsafe {
-        let brush = CreateSolidBrush(fill);
-        if brush.0 != 0 {
-            let _ = FillRect(hdc, &rect, brush);
-            let _ = DeleteObject(brush);
-        }
-    }
-
-    let close_rect = tab_close_rect(state.tab_host.vertical_tabs, rect);
-    let pad = scale_for_dpi(state.tab_host.vertical_tabs, 8);
-    let mut text_rect = windows::Win32::Foundation::RECT {
-        left: rect.left + pad,
-        top: rect.top,
-        right: (close_rect.left - pad).max(rect.left + pad),
-        bottom: rect.bottom,
-    };
-
-    let hfont = unsafe {
-        SendMessageW(
-            state.tab_host.vertical_tabs,
-            WM_GETFONT,
-            WPARAM(0),
-            LPARAM(0),
-        )
-        .0
-    };
-    let restore_font = if hfont != 0 {
-        Some(unsafe { SelectObject(hdc, HGDIOBJ(hfont)) })
-    } else {
-        None
-    };
-
-    let title = tab_title(doc_tab);
-    let mut wide: Vec<u16> = title.encode_utf16().collect();
-    unsafe {
-        SetBkMode(hdc, TRANSPARENT);
-        SetTextColor(hdc, fg);
-        if !wide.is_empty() {
-            DrawTextW(
-                hdc,
-                &mut wide,
-                &mut text_rect,
-                DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS | DT_NOPREFIX,
-            );
-        }
-    }
-
-    if let Some(prev) = restore_font {
+    if draw.nmcd.dwDrawStage == CDDS_ITEMPREPAINT {
+        let item_index = draw.nmcd.dwItemSpec;
+        let doc_index = doc_index_by_runtime_id(state, draw.nmcd.lItemlParam).unwrap_or(item_index);
+        let is_selected = doc_index == state.active;
+        let is_hot = !is_selected && state.tab_host.hot_tab == Some(item_index);
+        let (text_fg, fill_bg) = if is_selected {
+            (
+                state.tab_host.theme.selection_fg,
+                state.tab_host.theme.selection_bg,
+            )
+        } else if is_hot {
+            (state.tab_host.theme.fg, state.tab_host.theme.hover_bg)
+        } else {
+            (state.tab_host.theme.fg, state.tab_host.theme.bg)
+        };
         unsafe {
-            SelectObject(hdc, prev);
+            let brush = CreateSolidBrush(fill_bg);
+            if brush.0 != 0 {
+                FillRect(draw.nmcd.hdc, &draw.nmcd.rc, brush);
+                let _ = DeleteObject(brush);
+            }
         }
+        draw.clrText = text_fg;
+        draw.clrTextBk = fill_bg;
+        return LRESULT((CDRF_NEWFONT | CDRF_NOTIFYPOSTPAINT) as isize);
     }
-
-    let close_hot = state.tab_host.hot_tab == Some(item_index) && state.tab_host.hot_close;
-    draw_close_glyph(hdc, close_rect, fg, close_hot);
-
-    LRESULT(CDRF_SKIPDEFAULT as isize)
+    if draw.nmcd.dwDrawStage == CDDS_ITEMPOSTPAINT {
+        let item_index = draw.nmcd.dwItemSpec;
+        let doc_index = doc_index_by_runtime_id(state, draw.nmcd.lItemlParam).unwrap_or(item_index);
+        let is_selected = doc_index == state.active;
+        let close_hot = state.tab_host.hot_tab == Some(item_index) && state.tab_host.hot_close;
+        let text_fg = if is_selected {
+            state.tab_host.theme.selection_fg
+        } else {
+            state.tab_host.theme.fg
+        };
+        let close_rect = tab_close_rect(state.tab_host.vertical_tabs, draw.nmcd.rc);
+        draw_close_glyph(draw.nmcd.hdc, close_rect, text_fg, close_hot);
+        return LRESULT(CDRF_DODEFAULT as isize);
+    }
+    LRESULT(CDRF_DODEFAULT as isize)
 }
 
 fn set_editor_dark_mode(hwnd: HWND, state: &mut AppState, enabled: bool) {
