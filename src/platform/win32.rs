@@ -1963,6 +1963,10 @@ fn create_children(hwnd: HWND, instance: HINSTANCE) -> Result<AppState> {
     }
     unsafe {
         let _ = SetWindowSubclass(top_tabs, Some(top_tabs_subclass_proc), 0, 0);
+        // Visual styles paint the standard light-themed tabs even when our
+        // NM_CUSTOMDRAW handler returns CDRF_SKIPDEFAULT. Strip them so the
+        // theme background, hover/selected states, and close × actually show.
+        dark_mode::disable_visual_styles(top_tabs);
         let pad_x = scale_for_dpi(
             top_tabs,
             TAB_ITEM_LABEL_PADDING + TAB_CLOSE_BTN_SIZE + TAB_CLOSE_BTN_MARGIN,
@@ -4463,7 +4467,7 @@ fn tab_bar_height(state: &AppState) -> i32 {
     }
 }
 
-const TAB_ITEM_MIN_WIDTH: i32 = 120;
+const TAB_ITEM_MIN_WIDTH: i32 = 80;
 const TAB_ITEM_LABEL_PADDING: i32 = 8;
 
 unsafe extern "system" fn top_tabs_subclass_proc(
@@ -6154,6 +6158,7 @@ fn update_tab_host_theme(state: &mut AppState, dark: bool) -> Result<()> {
         );
         InvalidateRect(state.tab_host.vertical_tabs, None, true);
         InvalidateRect(state.tab_host.splitter, None, true);
+        InvalidateRect(state.tab_host.top_tabs, None, true);
     }
     Ok(())
 }

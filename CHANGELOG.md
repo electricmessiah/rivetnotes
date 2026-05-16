@@ -7,6 +7,22 @@ The format is based on Keep a Changelog, and this project adheres to SemVer.
 
 - TBD.
 
+## [0.4.11] - 2026-05-15
+
+- Fixed top tab strip ignoring dark mode and showing an invisible close `×`
+  (introduced by the v0.4.10 switch to `NM_CUSTOMDRAW`). Comctl32's themed
+  paint runs ahead of `CDRF_SKIPDEFAULT` and overwrites our custom paint, so
+  `SetWindowTheme(top_tabs, "", "")` is now called right after the tab control
+  is subclassed. With visual styles off, the existing `handle_top_tab_custom_draw`
+  takes full control of background/hover/selected colors plus the close glyph.
+- Lowered the minimum top-tab width from 120 to 80 DPI-scaled px so short
+  labels like `new 001` no longer get padded out to ~120 px. Long filenames
+  still grow naturally.
+- `update_tab_host_theme` now also invalidates `top_tabs` so toggling
+  **View &rarr; Dark Mode** at runtime repaints the top strip immediately.
+- New `dark_mode::disable_visual_styles(hwnd)` helper wrapping the
+  `SetWindowTheme(hwnd, "", "")` ffi.
+
 ## [0.4.10] - 2026-05-15
 
 - Replaced the uniform-width top tab bar with per-tab auto-sized tabs (the

@@ -128,6 +128,19 @@ pub fn apply_to_window(hwnd: HWND, dark: bool) {
     flush_menu_themes();
 }
 
+/// Strips visual styles from a control so its default themed paint stops
+/// running. Required for tab controls before `NM_CUSTOMDRAW` will actually
+/// take effect — otherwise comctl32 paints the standard light-themed tabs
+/// even when our handler returns `CDRF_SKIPDEFAULT`.
+pub fn disable_visual_styles(hwnd: HWND) {
+    if hwnd.0 == 0 {
+        return;
+    }
+    unsafe {
+        let _ = SetWindowTheme(hwnd, w!(""), w!(""));
+    }
+}
+
 pub fn theme_child_controls(parent: HWND, dark: bool) {
     if parent.0 == 0 {
         return;
