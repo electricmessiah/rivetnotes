@@ -7,6 +7,22 @@ The format is based on Keep a Changelog, and this project adheres to SemVer.
 
 - TBD.
 
+## [0.4.13] - 2026-05-15
+
+- Fixed the **Left / Right** vertical tab strip ignoring dark mode: every row
+  rendered with the bright `selection_bg` color (so all open files looked
+  selected) and clicking briefly flashed the light-theme Explorer selection
+  rectangle on top of the custom paint. Root cause was the same as the v0.4.12
+  top-tab fix — comctl32's themed paint was still running on top of our
+  `NM_CUSTOMDRAW` background fill, because the ListView never had visual
+  styles stripped and the handler returned `CDRF_NEWFONT | CDRF_NOTIFYPOSTPAINT`
+  (which leaves comctl32 in charge of the text and selection chrome).
+- `dark_mode::disable_visual_styles(vertical_tabs)` is now called right after
+  the ListView is created, and `handle_vertical_tab_custom_draw` now owns the
+  full item paint at `CDDS_ITEMPREPAINT` — background, label via `DrawTextW`,
+  and the close `×` glyph — then returns `CDRF_SKIPDEFAULT` so comctl32 paints
+  nothing further. The `CDDS_ITEMPOSTPAINT` arm is removed.
+
 ## [0.4.12] - 2026-05-15
 
 - Fully took over top tab painting from `WM_PAINT` in the existing
