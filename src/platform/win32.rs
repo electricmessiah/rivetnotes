@@ -6179,6 +6179,10 @@ fn update_tab_host_theme(state: &mut AppState, dark: bool) -> Result<()> {
     }
     state.tab_host.vertical_tabs_brush = brush;
     state.tab_host.theme = theme;
+    // Match the comctl32 selection rectangle / hot-track gradient to our
+    // theme so clicking a vertical tab doesn't briefly flash the light
+    // Explorer chrome.
+    dark_mode::apply_explorer_theme(state.tab_host.vertical_tabs, dark);
     unsafe {
         SendMessageW(
             state.tab_host.vertical_tabs,

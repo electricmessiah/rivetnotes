@@ -7,6 +7,47 @@ The format is based on Keep a Changelog, and this project adheres to SemVer.
 
 - TBD.
 
+## [0.4.16] - 2026-05-15
+
+- Killed the click-flash on the Left / Right vertical tab strip. When you
+  clicked a tab in dark mode, comctl32 briefly painted the light Explorer
+  selection rectangle before our `NM_CUSTOMDRAW` background overwrote it
+  on the next frame. Fixed by calling `SetWindowTheme(vertical_tabs,
+  "DarkMode_Explorer" | "Explorer", NULL)` from `update_tab_host_theme`,
+  which swaps the comctl32-drawn chrome to the dark variant instead of
+  trying to suppress it. (The `SetWindowTheme(hwnd, "", "")` strip used on
+  the top tab control would have re-broken visibility on the ListView, so
+  the named-theme path is mandatory here.)
+- New helper `dark_mode::apply_explorer_theme(hwnd, dark)` wraps the
+  light/dark `Explorer` theme selection.
+- Refreshed the docstring on `dark_mode::disable_visual_styles` to describe
+  the v0.4.12 `WM_PAINT` reason rather than the abandoned `NM_CUSTOMDRAW`
+  story, and added a "do not use on a `LVS_REPORT` ListView" warning so
+  future-me doesn't repeat the v0.4.13 mistake.
+- Added `docs/QA-CHECKLIST.md` — a permanent manual-smoke list (top tabs,
+  vertical tabs, dark mode toggle, session restore, large file mode, etc.)
+  so QA before tagging doesn't depend on skimming prior release notes.
+
+### Tab + dark-mode hardening summary (v0.4.9 – v0.4.15)
+
+The patch releases from v0.4.9 through v0.4.15 collectively rebuilt how
+the tab strip renders:
+
+- **Top tabs** were switched off `TCS_OWNERDRAWFIXED` so Windows
+  auto-sizes each tab to its own filename. The custom paint moved from
+  `WM_DRAWITEM` to a full `WM_PAINT` subclass (after `NM_CUSTOMDRAW`
+  proved unreliable for `SysTabControl32`), with visual styles stripped
+  via `SetWindowTheme`.
+- **Vertical tabs** kept their `NM_CUSTOMDRAW` path but had two bugs
+  fixed: (1) "which row is active?" now consults `state.active` instead
+  of the unreliable `nmcd.uItemState & CDIS_SELECTED`; (2) the click-flash
+  in v0.4.16 above.
+- Several false starts along the way (notably v0.4.13/v0.4.14 making the
+  vertical strip invisible by stripping visual styles on a ListView) are
+  preserved as individual entries for archaeology.
+
+If you want the executive summary, this is it. Individual entries follow.
+
 ## [0.4.15] - 2026-05-15
 
 - Restored visibility of the Left / Right vertical tab strip (broken in

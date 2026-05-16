@@ -128,16 +128,40 @@ pub fn apply_to_window(hwnd: HWND, dark: bool) {
     flush_menu_themes();
 }
 
-/// Strips visual styles from a control so its default themed paint stops
-/// running. Required for tab controls before `NM_CUSTOMDRAW` will actually
-/// take effect — otherwise comctl32 paints the standard light-themed tabs
-/// even when our handler returns `CDRF_SKIPDEFAULT`.
+/// Strips visual styles from a control so comctl32 stops drawing its themed
+/// background, borders, and selection chrome. We use this on the top tab
+/// control so the subclass `WM_PAINT` handler can take full ownership of
+/// painting — without this, comctl32's themed paint runs first and we can
+/// only paint a 3-px seam at the bottom. **Do not** call this on a
+/// `WC_LISTVIEWW` in `LVS_REPORT` mode: it collapses item heights to zero
+/// and rows render invisible (see the v0.4.13 → v0.4.14 saga). For ListViews,
+/// use [`apply_explorer_theme`] to swap between the light and dark Explorer
+/// theme variants instead.
 pub fn disable_visual_styles(hwnd: HWND) {
     if hwnd.0 == 0 {
         return;
     }
     unsafe {
         let _ = SetWindowTheme(hwnd, w!(""), w!(""));
+    }
+}
+
+/// Applies the dark or light Explorer visual style to a control. Used on
+/// the vertical tab `ListView` so the system-drawn selection rectangle
+/// matches our dark theme instead of flashing the light Explorer chrome on
+/// click. Unlike [`disable_visual_styles`], this keeps comctl32's paint
+/// paths alive — it just substitutes a different named theme.
+pub fn apply_explorer_theme(hwnd: HWND, dark: bool) {
+    if hwnd.0 == 0 {
+        return;
+    }
+    let theme: PCWSTR = if dark {
+        w!("DarkMode_Explorer")
+    } else {
+        w!("Explorer")
+    };
+    unsafe {
+        let _ = SetWindowTheme(hwnd, theme, PCWSTR::null());
     }
 }
 
