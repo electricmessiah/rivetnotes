@@ -7,6 +7,21 @@ The format is based on Keep a Changelog, and this project adheres to SemVer.
 
 - TBD.
 
+## [0.4.10] - 2026-05-15
+
+- Replaced the uniform-width top tab bar with per-tab auto-sized tabs (the
+  v0.4.9 fix re-applied the size after layout but tabs still rendered
+  truncated to `n…` on some sessions). The tab control no longer uses
+  `TCS_OWNERDRAWFIXED` — Windows now sizes each tab to fit its filename, and
+  `TCM_SETPADDING` reserves space for the close `×` glyph. `TCM_SETMINTABWIDTH`
+  keeps narrow filenames readable.
+- Re-implemented custom paint via `NM_CUSTOMDRAW` (handled in the parent
+  `WM_NOTIFY`) instead of `WM_DRAWITEM`, since `WM_DRAWITEM` requires the now-
+  removed `TCS_OWNERDRAWFIXED` style. Theme colors, hover/selection states, and
+  the close glyph are unchanged.
+- Removed `refresh_top_tab_item_size`, the `TCM_SETITEMSIZE` plumbing, and the
+  `TAB_ITEM_MAX_WIDTH` clamp — auto-sized tabs do not need them.
+
 ## [0.4.9] - 2026-05-15
 
 - Fixed top tabs truncating filenames to "n…" at startup. Root cause:

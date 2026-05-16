@@ -7,13 +7,13 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use windows::Win32::Foundation::{
     BOOL, COLORREF, ERROR_CLASS_ALREADY_EXISTS, GetLastError, HINSTANCE, HWND, LPARAM, LRESULT,
-    POINT, SIZE, WPARAM,
+    POINT, WPARAM,
 };
 use windows::Win32::Graphics::Gdi::{
     BeginPaint, CreatePen, CreateSolidBrush, DT_CENTER, DT_END_ELLIPSIS, DT_HIDEPREFIX,
     DT_NOPREFIX, DT_SINGLELINE, DT_VCENTER, DeleteObject, DrawTextW, EndPaint, FillRect, GetDC,
-    GetTextExtentPoint32W, HBRUSH, HDC, HGDIOBJ, InvalidateRect, LineTo, MoveToEx, PAINTSTRUCT,
-    PS_SOLID, ReleaseDC, ScreenToClient, SelectObject, SetBkMode, SetTextColor, TRANSPARENT,
+    HBRUSH, HDC, HGDIOBJ, InvalidateRect, LineTo, MoveToEx, PAINTSTRUCT, PS_SOLID, ReleaseDC,
+    ScreenToClient, SelectObject, SetBkMode, SetTextColor, TRANSPARENT,
 };
 use windows::Win32::System::Com::CoTaskMemFree;
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
@@ -23,18 +23,19 @@ use windows::Win32::UI::Controls::Dialogs::{
 };
 use windows::Win32::UI::Controls::{
     CDDS_ITEMPOSTPAINT, CDDS_ITEMPREPAINT, CDDS_PREPAINT, CDIS_HOT, CDIS_SELECTED, CDRF_DODEFAULT,
-    CDRF_NEWFONT, CDRF_NOTIFYITEMDRAW, CDRF_NOTIFYPOSTPAINT, DRAWITEMSTRUCT, ICC_LISTVIEW_CLASSES,
-    ICC_WIN95_CLASSES, INITCOMMONCONTROLSEX, InitCommonControlsEx, LIST_VIEW_ITEM_STATE_FLAGS,
-    LVCF_WIDTH, LVCOLUMNW, LVHITTESTINFO, LVIF_PARAM, LVIF_TEXT, LVIS_FOCUSED, LVIS_SELECTED,
-    LVITEMW, LVM_DELETEALLITEMS, LVM_GETITEMRECT, LVM_HITTEST, LVM_INSERTCOLUMNW, LVM_INSERTITEMW,
-    LVM_SETBKCOLOR, LVM_SETCOLUMNWIDTH, LVM_SETEXTENDEDLISTVIEWSTYLE, LVM_SETITEMSTATE,
-    LVM_SETTEXTBKCOLOR, LVM_SETTEXTCOLOR, LVN_ITEMCHANGED, LVS_EX_DOUBLEBUFFER,
-    LVS_EX_FULLROWSELECT, LVS_NOCOLUMNHEADER, LVS_REPORT, LVS_SHOWSELALWAYS, LVS_SINGLESEL,
-    NM_CUSTOMDRAW, NM_RCLICK, NMHDR, NMLISTVIEW, NMLVCUSTOMDRAW, ODS_HOTLIGHT, ODS_INACTIVE,
-    ODS_NOACCEL, ODS_SELECTED, SB_GETPARTS, SB_GETRECT, SB_GETTEXTLENGTHW, SB_GETTEXTW,
-    SB_SETPARTS, SB_SETTEXTW, STATUSCLASSNAMEW, TCHITTESTINFO, TCIF_TEXT, TCITEMW, TCM_DELETEITEM,
-    TCM_GETCURSEL, TCM_GETITEMRECT, TCM_HITTEST, TCM_INSERTITEMW, TCM_SETCURSEL, TCM_SETITEMSIZE,
-    TCM_SETITEMW, TCN_SELCHANGE, TCS_OWNERDRAWFIXED, WC_LISTVIEWW, WC_TABCONTROLW,
+    CDRF_NEWFONT, CDRF_NOTIFYITEMDRAW, CDRF_NOTIFYPOSTPAINT, CDRF_SKIPDEFAULT,
+    ICC_LISTVIEW_CLASSES, ICC_WIN95_CLASSES, INITCOMMONCONTROLSEX, InitCommonControlsEx,
+    LIST_VIEW_ITEM_STATE_FLAGS, LVCF_WIDTH, LVCOLUMNW, LVHITTESTINFO, LVIF_PARAM, LVIF_TEXT,
+    LVIS_FOCUSED, LVIS_SELECTED, LVITEMW, LVM_DELETEALLITEMS, LVM_GETITEMRECT, LVM_HITTEST,
+    LVM_INSERTCOLUMNW, LVM_INSERTITEMW, LVM_SETBKCOLOR, LVM_SETCOLUMNWIDTH,
+    LVM_SETEXTENDEDLISTVIEWSTYLE, LVM_SETITEMSTATE, LVM_SETTEXTBKCOLOR, LVM_SETTEXTCOLOR,
+    LVN_ITEMCHANGED, LVS_EX_DOUBLEBUFFER, LVS_EX_FULLROWSELECT, LVS_NOCOLUMNHEADER, LVS_REPORT,
+    LVS_SHOWSELALWAYS, LVS_SINGLESEL, NM_CUSTOMDRAW, NM_RCLICK, NMCUSTOMDRAW, NMHDR, NMLISTVIEW,
+    NMLVCUSTOMDRAW, ODS_HOTLIGHT, ODS_INACTIVE, ODS_NOACCEL, ODS_SELECTED, SB_GETPARTS, SB_GETRECT,
+    SB_GETTEXTLENGTHW, SB_GETTEXTW, SB_SETPARTS, SB_SETTEXTW, STATUSCLASSNAMEW, TCHITTESTINFO,
+    TCIF_TEXT, TCITEMW, TCM_DELETEITEM, TCM_GETCURSEL, TCM_GETITEMRECT, TCM_HITTEST,
+    TCM_INSERTITEMW, TCM_SETCURSEL, TCM_SETITEMW, TCM_SETMINTABWIDTH, TCM_SETPADDING,
+    TCN_SELCHANGE, WC_LISTVIEWW, WC_TABCONTROLW,
 };
 use windows::Win32::UI::HiDpi::{
     DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, GetDpiForWindow, SetProcessDpiAwarenessContext,
@@ -66,10 +67,10 @@ use windows::Win32::UI::WindowsAndMessaging::{
     TrackPopupMenu, TranslateAcceleratorW, TranslateMessage, WINDOW_STYLE, WM_ACTIVATEAPP,
     WM_CAPTURECHANGED, WM_CLOSE, WM_COMMAND, WM_CONTEXTMENU, WM_CREATE, WM_CTLCOLORBTN,
     WM_CTLCOLORDLG, WM_CTLCOLOREDIT, WM_CTLCOLORLISTBOX, WM_CTLCOLORSTATIC, WM_DESTROY,
-    WM_DRAWITEM, WM_DROPFILES, WM_ERASEBKGND, WM_GETFONT, WM_GETICON, WM_INITMENUPOPUP,
-    WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONUP, WM_MOUSEMOVE, WM_NCDESTROY, WM_NOTIFY, WM_PAINT,
-    WM_SETCURSOR, WM_SETICON, WM_SIZE, WM_TIMER, WNDCLASSEXW, WS_BORDER, WS_CAPTION, WS_CHILD,
-    WS_CLIPSIBLINGS, WS_OVERLAPPEDWINDOW, WS_SYSMENU, WS_TABSTOP, WS_VISIBLE, WS_VSCROLL,
+    WM_DROPFILES, WM_ERASEBKGND, WM_GETFONT, WM_GETICON, WM_INITMENUPOPUP, WM_LBUTTONDOWN,
+    WM_LBUTTONUP, WM_MBUTTONUP, WM_MOUSEMOVE, WM_NCDESTROY, WM_NOTIFY, WM_PAINT, WM_SETCURSOR,
+    WM_SETICON, WM_SIZE, WM_TIMER, WNDCLASSEXW, WS_BORDER, WS_CAPTION, WS_CHILD, WS_CLIPSIBLINGS,
+    WS_OVERLAPPEDWINDOW, WS_SYSMENU, WS_TABSTOP, WS_VISIBLE, WS_VSCROLL,
 };
 use windows::core::PWSTR;
 use windows::core::{HSTRING, PCWSTR, w};
@@ -1701,16 +1702,6 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                 _ => unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) },
             }
         }
-        WM_DRAWITEM => {
-            if let Some(state) = get_state(hwnd) {
-                let dis = unsafe { &*(lparam.0 as *const DRAWITEMSTRUCT) };
-                if dis.hwndItem == state.tab_host.top_tabs {
-                    draw_top_tab_item(state, dis);
-                    return LRESULT(1);
-                }
-            }
-            unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
-        }
         WM_NOTIFY => {
             let nmhdr = unsafe { &*(lparam.0 as *const NMHDR) };
             if nmhdr.hwndFrom != HWND(0) {
@@ -1775,6 +1766,10 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                     if nmhdr.hwndFrom == state.tab_host.vertical_tabs && nmhdr.code == NM_CUSTOMDRAW
                     {
                         return handle_vertical_tab_custom_draw(state, lparam);
+                    }
+
+                    if nmhdr.hwndFrom == state.tab_host.top_tabs && nmhdr.code == NM_CUSTOMDRAW {
+                        return handle_top_tab_custom_draw(state, lparam);
                     }
                 }
 
@@ -1952,7 +1947,7 @@ fn create_children(hwnd: HWND, instance: HINSTANCE) -> Result<AppState> {
             Default::default(),
             WC_TABCONTROLW,
             PCWSTR::null(),
-            window_style(WS_CHILD.0 | WS_VISIBLE.0 | WS_CLIPSIBLINGS.0 | TCS_OWNERDRAWFIXED),
+            window_style(WS_CHILD.0 | WS_VISIBLE.0 | WS_CLIPSIBLINGS.0),
             0,
             0,
             0,
@@ -1968,6 +1963,23 @@ fn create_children(hwnd: HWND, instance: HINSTANCE) -> Result<AppState> {
     }
     unsafe {
         let _ = SetWindowSubclass(top_tabs, Some(top_tabs_subclass_proc), 0, 0);
+        let pad_x = scale_for_dpi(
+            top_tabs,
+            TAB_ITEM_LABEL_PADDING + TAB_CLOSE_BTN_SIZE + TAB_CLOSE_BTN_MARGIN,
+        );
+        let pad_y = scale_for_dpi(top_tabs, 4);
+        SendMessageW(
+            top_tabs,
+            TCM_SETPADDING,
+            WPARAM(0),
+            LPARAM(((pad_y as isize) << 16) | (pad_x as isize & 0xFFFF)),
+        );
+        SendMessageW(
+            top_tabs,
+            TCM_SETMINTABWIDTH,
+            WPARAM(0),
+            LPARAM(scale_for_dpi(top_tabs, TAB_ITEM_MIN_WIDTH) as isize),
+        );
     }
 
     let vertical_tabs = unsafe {
@@ -2257,7 +2269,6 @@ fn layout_children(hwnd: HWND, state: &mut AppState) {
         }
     }
     if state.tab_host.placement == TabPlacement::Top {
-        refresh_top_tab_item_size(state);
         unsafe {
             InvalidateRect(state.tab_host.top_tabs, None, true);
         }
@@ -4030,7 +4041,6 @@ fn add_tab(state: &mut AppState, title: &str, mut doc_tab: DocTab) -> Result<usi
     insert_tab_item(state.tab_host.top_tabs, index, title)?;
     state.docs.push(doc_tab);
     rebuild_vertical_tab_list(state);
-    refresh_top_tab_item_size(state);
     Ok(index)
 }
 
@@ -4072,7 +4082,9 @@ fn update_tab_text(state: &mut AppState, index: usize) {
             );
         }
         rebuild_vertical_tab_list(state);
-        refresh_top_tab_item_size(state);
+        unsafe {
+            InvalidateRect(state.tab_host.top_tabs, None, true);
+        }
     }
 }
 
@@ -4452,8 +4464,7 @@ fn tab_bar_height(state: &AppState) -> i32 {
 }
 
 const TAB_ITEM_MIN_WIDTH: i32 = 120;
-const TAB_ITEM_MAX_WIDTH: i32 = 400;
-const TAB_ITEM_LABEL_PADDING: i32 = 12;
+const TAB_ITEM_LABEL_PADDING: i32 = 8;
 
 unsafe extern "system" fn top_tabs_subclass_proc(
     hwnd: HWND,
@@ -4648,50 +4659,6 @@ unsafe extern "system" fn status_bar_subclass_proc(
     unsafe { DefSubclassProc(hwnd, msg, wparam, lparam) }
 }
 
-fn refresh_top_tab_item_size(state: &AppState) {
-    let hwnd = state.tab_host.top_tabs;
-    if hwnd.0 == 0 || state.docs.is_empty() {
-        return;
-    }
-    let hfont = unsafe { SendMessageW(hwnd, WM_GETFONT, WPARAM(0), LPARAM(0)) };
-    let hdc = unsafe { GetDC(hwnd) };
-    if hdc.0 == 0 {
-        return;
-    }
-    let restore_font = if hfont.0 != 0 {
-        let prev = unsafe { SelectObject(hdc, HGDIOBJ(hfont.0)) };
-        Some(prev)
-    } else {
-        None
-    };
-    let mut max_text_w = scale_for_dpi(hwnd, TAB_ITEM_MIN_WIDTH);
-    for doc_tab in &state.docs {
-        let title = tab_title(doc_tab);
-        let wide: Vec<u16> = title.encode_utf16().collect();
-        if wide.is_empty() {
-            continue;
-        }
-        let mut size = SIZE { cx: 0, cy: 0 };
-        unsafe {
-            let _ = GetTextExtentPoint32W(hdc, &wide, &mut size);
-        }
-        max_text_w = max_text_w.max(size.cx);
-    }
-    if let Some(prev) = restore_font {
-        unsafe { SelectObject(hdc, prev) };
-    }
-    unsafe { ReleaseDC(hwnd, hdc) };
-    let close_reserve = scale_for_dpi(hwnd, TAB_CLOSE_BTN_SIZE + TAB_CLOSE_BTN_MARGIN * 2);
-    let padding = scale_for_dpi(hwnd, TAB_ITEM_LABEL_PADDING * 2);
-    let max_clamp = scale_for_dpi(hwnd, TAB_ITEM_MAX_WIDTH);
-    let item_w = (max_text_w + padding + close_reserve).min(max_clamp);
-    let item_h = tab_bar_height(state);
-    let dim = ((item_h as isize) << 16) | (item_w as isize & 0xFFFF);
-    unsafe {
-        SendMessageW(hwnd, TCM_SETITEMSIZE, WPARAM(0), LPARAM(dim));
-    }
-}
-
 fn tab_index_at_point(tabs: HWND, count: usize, point: LPARAM) -> Option<usize> {
     let x = lparam_x(point);
     let y = lparam_y(point);
@@ -4819,7 +4786,9 @@ fn close_tab(hwnd: HWND, state: &mut AppState, index: usize) -> Result<bool> {
 
     let new_index = state.active.min(state.docs.len().saturating_sub(1));
     select_tab(hwnd, state, new_index);
-    refresh_top_tab_item_size(state);
+    unsafe {
+        InvalidateRect(state.tab_host.top_tabs, None, true);
+    }
     if let Err(err) = save_session_checkpoint(state) {
         logging::log_error(&format!("session_save_after_tab_close_failed err={err}"));
     }
@@ -5896,60 +5865,68 @@ fn draw_close_glyph(hdc: HDC, rect: windows::Win32::Foundation::RECT, fg: COLORR
     }
 }
 
-fn draw_top_tab_item(state: &AppState, dis: &DRAWITEMSTRUCT) {
-    let index = dis.itemID as usize;
-    let Some(doc_tab) = state.docs.get(index) else {
-        return;
-    };
-    let item_state = dis.itemState.0;
-    let selected = (item_state & ODS_SELECTED.0) != 0;
-    let hot = (item_state & ODS_HOTLIGHT.0) != 0
-        || state.tab_host.hot_in_top && state.tab_host.hot_tab == Some(index);
-    let (fill, fg) = if selected {
-        (
-            state.tab_host.theme.selection_bg,
-            state.tab_host.theme.selection_fg,
-        )
-    } else if hot {
-        (state.tab_host.theme.hover_bg, state.tab_host.theme.fg)
-    } else {
-        (state.tab_host.theme.bg, state.tab_host.theme.fg)
-    };
-    let hdc = dis.hDC;
-    let rect = dis.rcItem;
-    unsafe {
-        let brush = CreateSolidBrush(fill);
-        if brush.0 != 0 {
-            FillRect(hdc, &rect, brush);
-            let _ = DeleteObject(brush);
+fn handle_top_tab_custom_draw(state: &AppState, lparam: LPARAM) -> LRESULT {
+    let draw = unsafe { &*(lparam.0 as *const NMCUSTOMDRAW) };
+    match draw.dwDrawStage {
+        CDDS_PREPAINT => LRESULT(CDRF_NOTIFYITEMDRAW as isize),
+        CDDS_ITEMPREPAINT => {
+            let index = draw.dwItemSpec;
+            let Some(doc_tab) = state.docs.get(index) else {
+                return LRESULT(CDRF_DODEFAULT as isize);
+            };
+            let item_state = draw.uItemState.0;
+            let selected = (item_state & CDIS_SELECTED.0) != 0;
+            let hot = (item_state & CDIS_HOT.0) != 0
+                || state.tab_host.hot_in_top && state.tab_host.hot_tab == Some(index);
+            let (fill, fg) = if selected {
+                (
+                    state.tab_host.theme.selection_bg,
+                    state.tab_host.theme.selection_fg,
+                )
+            } else if hot {
+                (state.tab_host.theme.hover_bg, state.tab_host.theme.fg)
+            } else {
+                (state.tab_host.theme.bg, state.tab_host.theme.fg)
+            };
+            let hdc = draw.hdc;
+            let rect = draw.rc;
+            unsafe {
+                let brush = CreateSolidBrush(fill);
+                if brush.0 != 0 {
+                    FillRect(hdc, &rect, brush);
+                    let _ = DeleteObject(brush);
+                }
+            }
+            let close_rect = tab_close_rect(state.tab_host.top_tabs, rect);
+            let pad = scale_for_dpi(state.tab_host.top_tabs, 8);
+            let mut text_rect = windows::Win32::Foundation::RECT {
+                left: rect.left + pad,
+                top: rect.top,
+                right: (close_rect.left - pad).max(rect.left + pad),
+                bottom: rect.bottom,
+            };
+            let title = tab_title(doc_tab);
+            let mut wide: Vec<u16> = title.encode_utf16().collect();
+            unsafe {
+                SetBkMode(hdc, TRANSPARENT);
+                SetTextColor(hdc, fg);
+                if !wide.is_empty() {
+                    DrawTextW(
+                        hdc,
+                        &mut wide,
+                        &mut text_rect,
+                        DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS | DT_NOPREFIX,
+                    );
+                }
+            }
+            let close_hot = state.tab_host.hot_in_top
+                && state.tab_host.hot_tab == Some(index)
+                && state.tab_host.hot_close;
+            draw_close_glyph(hdc, close_rect, fg, close_hot);
+            LRESULT(CDRF_SKIPDEFAULT as isize)
         }
+        _ => LRESULT(CDRF_DODEFAULT as isize),
     }
-    let close_rect = tab_close_rect(state.tab_host.top_tabs, rect);
-    let pad = scale_for_dpi(state.tab_host.top_tabs, 8);
-    let mut text_rect = windows::Win32::Foundation::RECT {
-        left: rect.left + pad,
-        top: rect.top,
-        right: (close_rect.left - pad).max(rect.left + pad),
-        bottom: rect.bottom,
-    };
-    let title = tab_title(doc_tab);
-    let mut wide: Vec<u16> = title.encode_utf16().collect();
-    unsafe {
-        SetBkMode(hdc, TRANSPARENT);
-        SetTextColor(hdc, fg);
-        if !wide.is_empty() {
-            DrawTextW(
-                hdc,
-                &mut wide,
-                &mut text_rect,
-                DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS | DT_NOPREFIX,
-            );
-        }
-    }
-    let close_hot = state.tab_host.hot_in_top
-        && state.tab_host.hot_tab == Some(index)
-        && state.tab_host.hot_close;
-    draw_close_glyph(hdc, close_rect, fg, close_hot);
 }
 
 fn handle_vertical_tab_custom_draw(state: &AppState, lparam: LPARAM) -> LRESULT {
