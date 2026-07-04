@@ -103,6 +103,7 @@ const IDM_FILE_SAVE_AS: u16 = 102;
 const IDM_FILE_SAVE_AS_UTF8_BOM: u16 = 103;
 const IDM_FILE_SAVE_AS_UTF16_LE: u16 = 104;
 const IDM_FILE_SAVE_ALL: u16 = 105;
+const IDM_FILE_RELOAD: u16 = 106;
 const IDM_FILE_EXIT: u16 = 199;
 const IDM_EDIT_UNDO: u16 = 300;
 const IDM_EDIT_REDO: u16 = 301;
@@ -141,6 +142,9 @@ const CMD_TAB_NEXT: u16 = 349;
 const CMD_TAB_PREV: u16 = 350;
 const CMD_EDITOR_COLLAPSE_SELECTION: u16 = 352;
 const CMD_EDITOR_EXPAND_ALL: u16 = 353;
+const IDM_VIEW_ZOOM_IN: u16 = 354;
+const IDM_VIEW_ZOOM_OUT: u16 = 355;
+const IDM_VIEW_ZOOM_RESET: u16 = 356;
 // Language (syntax) override commands. CMD_LANG_AUTO clears the per-tab override
 // and falls back to extension detection; the rest force a specific lexer.
 const CMD_LANG_AUTO: u16 = 360;
@@ -187,6 +191,7 @@ const SCN_SAVEPOINTLEFT: u32 = 2003;
 const SCN_UPDATEUI: u32 = 2007;
 const SCN_MODIFIED: u32 = 2008;
 const SCN_MARGINCLICK: u32 = 2010;
+const SCN_ZOOM: u32 = 2018;
 
 const VK_A: u16 = 0x41;
 const VK_C: u16 = 0x43;
@@ -211,6 +216,11 @@ const VK_PRIOR: u16 = 0x21;
 const VK_NEXT: u16 = 0x22;
 const VK_UP: u16 = 0x26;
 const VK_DOWN: u16 = 0x28;
+const VK_0: u16 = 0x30;
+const VK_ADD: u16 = 0x6B;
+const VK_SUBTRACT: u16 = 0x6D;
+const VK_OEM_PLUS: u16 = 0xBB;
+const VK_OEM_MINUS: u16 = 0xBD;
 
 const IDC_FIND_TEXT: usize = 5001;
 const IDC_REPLACE_TEXT: usize = 5002;
@@ -654,6 +664,12 @@ fn create_menu() -> Result<HMENU> {
             w!("Save All"),
         )?;
         AppendMenuW(file_menu, MF_STRING, IDM_TAB_CLOSE as usize, w!("Close"))?;
+        AppendMenuW(
+            file_menu,
+            MF_STRING,
+            IDM_FILE_RELOAD as usize,
+            w!("Reload from Disk"),
+        )?;
         AppendMenuW(file_menu, MF_SEPARATOR, 0, PCWSTR::null())?;
         AppendMenuW(
             file_menu,
@@ -841,6 +857,25 @@ fn create_menu() -> Result<HMENU> {
             MF_STRING,
             CMD_VIEW_ALWAYS_ON_TOP as usize,
             w!("Always On Top"),
+        )?;
+        AppendMenuW(view_menu, MF_SEPARATOR, 0, PCWSTR::null())?;
+        AppendMenuW(
+            view_menu,
+            MF_STRING,
+            IDM_VIEW_ZOOM_IN as usize,
+            w!("Zoom In"),
+        )?;
+        AppendMenuW(
+            view_menu,
+            MF_STRING,
+            IDM_VIEW_ZOOM_OUT as usize,
+            w!("Zoom Out"),
+        )?;
+        AppendMenuW(
+            view_menu,
+            MF_STRING,
+            IDM_VIEW_ZOOM_RESET as usize,
+            w!("Reset Zoom"),
         )?;
         AppendMenuW(view_menu, MF_SEPARATOR, 0, PCWSTR::null())?;
         let language_menu = CreatePopupMenu()?;
@@ -1056,6 +1091,31 @@ fn create_accelerators() -> Result<HACCEL> {
             fVirt: FVIRTKEY | FCONTROL,
             key: VK_G,
             cmd: IDM_EDIT_GOTO_LINE,
+        },
+        ACCEL {
+            fVirt: FVIRTKEY | FCONTROL,
+            key: VK_OEM_PLUS,
+            cmd: IDM_VIEW_ZOOM_IN,
+        },
+        ACCEL {
+            fVirt: FVIRTKEY | FCONTROL,
+            key: VK_ADD,
+            cmd: IDM_VIEW_ZOOM_IN,
+        },
+        ACCEL {
+            fVirt: FVIRTKEY | FCONTROL,
+            key: VK_OEM_MINUS,
+            cmd: IDM_VIEW_ZOOM_OUT,
+        },
+        ACCEL {
+            fVirt: FVIRTKEY | FCONTROL,
+            key: VK_SUBTRACT,
+            cmd: IDM_VIEW_ZOOM_OUT,
+        },
+        ACCEL {
+            fVirt: FVIRTKEY | FCONTROL,
+            key: VK_0,
+            cmd: IDM_VIEW_ZOOM_RESET,
         },
         ACCEL {
             fVirt: FVIRTKEY | FCONTROL | FSHIFT,
@@ -1380,6 +1440,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
         }
         WM_INITMENUPOPUP => {
             if let Some(state) = get_state(hwnd) {
+                update_file_menu(hwnd, state);
                 update_copy_path_menu(hwnd, state);
                 update_language_menu(hwnd, state);
             }
@@ -1391,6 +1452,14 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                 IDM_FILE_OPEN => {
                     if let Some(state) = get_state(hwnd)
                         && let Err(err) = open_from_dialog(hwnd, state)
+                    {
+                        show_error("Rivet error", &err.to_string());
+                    }
+                    LRESULT(0)
+                }
+                IDM_FILE_RELOAD => {
+                    if let Some(state) = get_state(hwnd)
+                        && let Err(err) = reload_active_from_disk(hwnd, state)
                     {
                         show_error("Rivet error", &err.to_string());
                     }
@@ -1677,6 +1746,24 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                     }
                     LRESULT(0)
                 }
+                IDM_VIEW_ZOOM_IN => {
+                    if let Some(state) = get_state(hwnd) {
+                        adjust_zoom(state, 1);
+                    }
+                    LRESULT(0)
+                }
+                IDM_VIEW_ZOOM_OUT => {
+                    if let Some(state) = get_state(hwnd) {
+                        adjust_zoom(state, -1);
+                    }
+                    LRESULT(0)
+                }
+                IDM_VIEW_ZOOM_RESET => {
+                    if let Some(state) = get_state(hwnd) {
+                        set_app_zoom(state, settings::DEFAULT_ZOOM_LEVEL);
+                    }
+                    LRESULT(0)
+                }
                 CMD_EDITOR_COLLAPSE_SELECTION => {
                     if let Some(state) = get_state(hwnd)
                         && let Some(editor) = active_editor(state)
@@ -1947,6 +2034,15 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                         } else {
                             scintilla::toggle_fold(editor, line);
                         }
+                    }
+                    return LRESULT(0);
+                }
+
+                if nmhdr.code == SCN_ZOOM {
+                    // Ctrl+mousewheel zooms one Scintilla control; fold that
+                    // back into the app-wide level so every tab stays in sync.
+                    if let Some(state) = get_state(hwnd) {
+                        set_app_zoom(state, scintilla::get_zoom(nmhdr.hwndFrom));
                     }
                     return LRESULT(0);
                 }
@@ -2533,6 +2629,7 @@ fn open_path_new_tab(
         wrap_enabled,
         state.ui_settings.large_file_threshold_mb,
         state.ui_settings.large_file_disable_word_wrap,
+        state.ui_settings.zoom_level,
     )?;
     if let Some(encoding) = encoding {
         doc_tab.doc.encoding = encoding;
@@ -2731,29 +2828,84 @@ fn check_external_change(hwnd: HWND, state: &mut AppState) -> Result<()> {
 
     if let Some(new_stamp) = document::check_stamp(&path, &stamp)? {
         if prompt_reload(hwnd) {
-            {
-                let doc_tab = match state.docs.get_mut(index) {
-                    Some(doc_tab) => doc_tab,
-                    None => return Ok(()),
-                };
-                load_file_into_doc(
-                    doc_tab,
-                    &path,
-                    state.ui_settings.large_file_threshold_mb,
-                    state.ui_settings.large_file_disable_word_wrap,
-                )?;
-                apply_syntax_for_doc(doc_tab, state.editor_dark);
-            }
-            apply_large_file_mode_restrictions(hwnd, state, index);
-            update_tab_text(state, index);
-            update_title(hwnd, state);
-            update_status(state);
+            reload_doc_from_path(hwnd, state, index, &path)?;
         } else if let Some(doc_tab) = state.docs.get_mut(index) {
             doc_tab.doc.stamp = Some(new_stamp);
         }
     }
 
     Ok(())
+}
+
+/// Re-reads `path` into the tab at `index`, preserving the caret position
+/// (clamped to the new length) and refreshing syntax, large-file mode, tab
+/// text, title, and status.
+fn reload_doc_from_path(
+    hwnd: HWND,
+    state: &mut AppState,
+    index: usize,
+    path: &PathBuf,
+) -> Result<()> {
+    {
+        let doc_tab = match state.docs.get_mut(index) {
+            Some(doc_tab) => doc_tab,
+            None => return Ok(()),
+        };
+        let caret = scintilla::get_current_pos(doc_tab.editor);
+        load_file_into_doc(
+            doc_tab,
+            path,
+            state.ui_settings.large_file_threshold_mb,
+            state.ui_settings.large_file_disable_word_wrap,
+        )?;
+        apply_syntax_for_doc(doc_tab, state.editor_dark);
+        scintilla::goto_pos(
+            doc_tab.editor,
+            caret.min(scintilla::get_length(doc_tab.editor)),
+        );
+    }
+    apply_large_file_mode_restrictions(hwnd, state, index);
+    update_tab_text(state, index);
+    update_title(hwnd, state);
+    update_status(state);
+    Ok(())
+}
+
+/// File > Reload from Disk: unconditionally re-reads the active tab's file,
+/// asking for confirmation first when unsaved changes would be discarded.
+fn reload_active_from_disk(hwnd: HWND, state: &mut AppState) -> Result<()> {
+    let index = state.active;
+    let Some(doc_tab) = state.docs.get(index) else {
+        return Ok(());
+    };
+    let Some(path) = doc_tab.doc.path.clone() else {
+        return Ok(());
+    };
+    if !path.exists() {
+        return Err(AppError::new(format!(
+            "File no longer exists on disk:\n{}",
+            path.display()
+        )));
+    }
+    if doc_tab.doc.is_dirty && !prompt_discard_and_reload(hwnd) {
+        return Ok(());
+    }
+    reload_doc_from_path(hwnd, state, index, &path)
+}
+
+fn prompt_discard_and_reload(hwnd: HWND) -> bool {
+    let title = HSTRING::from("Reload from Disk");
+    let message =
+        HSTRING::from("This file has unsaved changes. Discard them and reload from disk?");
+    let result = unsafe {
+        MessageBoxW(
+            hwnd,
+            PCWSTR::from_raw(message.as_ptr()),
+            PCWSTR::from_raw(title.as_ptr()),
+            MB_YESNO | MB_ICONWARNING,
+        )
+    };
+    result == IDYES
 }
 
 fn prompt_reload(hwnd: HWND) -> bool {
@@ -2795,6 +2947,7 @@ fn update_status(state: &AppState) {
     let mut line = 1usize;
     let mut col = 1usize;
     let mut sel_len = 0usize;
+    let mut words = String::new();
     let mut eol = "CRLF".to_string();
     let mut encoding = "UTF-8".to_string();
     let mut flags = String::new();
@@ -2808,6 +2961,10 @@ fn update_status(state: &AppState) {
         // Scintilla always holds UTF-8 internally, so report the document's
         // on-disk encoding instead of the buffer codepage.
         encoding = doc_tab.doc.encoding.label().to_string();
+        // None means the count is suppressed (Large File Mode); leave blank.
+        if let Some(count) = doc_tab.word_count {
+            words = format!("Words: {}", format_thousands(count));
+        }
         if doc_tab.doc.is_dirty {
             flags.push('*');
         }
@@ -2833,9 +2990,10 @@ fn update_status(state: &AppState) {
 
     set_status_part_text(state.status, 0, &format!("Ln {line}, Col {col}"));
     set_status_part_text(state.status, 1, &format!("Sel {sel_len}"));
-    set_status_part_text(state.status, 2, &format!("EOL: {eol}"));
-    set_status_part_text(state.status, 3, &format!("ENC: {encoding}"));
-    set_status_part_text(state.status, 4, &flags);
+    set_status_part_text(state.status, 2, &words);
+    set_status_part_text(state.status, 3, &format!("EOL: {eol}"));
+    set_status_part_text(state.status, 4, &format!("ENC: {encoding}"));
+    set_status_part_text(state.status, 5, &flags);
 }
 
 fn update_status_parts(state: &AppState) {
@@ -2845,14 +3003,16 @@ fn update_status_parts(state: &AppState) {
     }
     let width = rect.right - rect.left;
     let sel_width = scale_for_dpi(state.status, 90);
+    let words_width = scale_for_dpi(state.status, 120);
     let eol_width = scale_for_dpi(state.status, 90);
     let enc_width = scale_for_dpi(state.status, 110);
     let dirty_width = scale_for_dpi(state.status, 220);
-    let part0 = (width - sel_width - eol_width - enc_width - dirty_width).max(0);
-    let part1 = (width - eol_width - enc_width - dirty_width).max(part0);
-    let part2 = (width - enc_width - dirty_width).max(part1);
-    let part3 = (width - dirty_width).max(part2);
-    let parts = [part0, part1, part2, part3, -1];
+    let part0 = (width - sel_width - words_width - eol_width - enc_width - dirty_width).max(0);
+    let part1 = (width - words_width - eol_width - enc_width - dirty_width).max(part0);
+    let part2 = (width - eol_width - enc_width - dirty_width).max(part1);
+    let part3 = (width - enc_width - dirty_width).max(part2);
+    let part4 = (width - dirty_width).max(part3);
+    let parts = [part0, part1, part2, part3, part4, -1];
     unsafe {
         SendMessageW(
             state.status,
@@ -3871,6 +4031,20 @@ fn count_words(text: &str) -> usize {
     count
 }
 
+/// Formats a count with comma separators, e.g. 1234567 -> "1,234,567".
+fn format_thousands(value: usize) -> String {
+    let digits = value.to_string();
+    let mut out = String::with_capacity(digits.len() + digits.len() / 3);
+    let offset = digits.len() % 3;
+    for (index, ch) in digits.chars().enumerate() {
+        if index != 0 && index % 3 == offset {
+            out.push(',');
+        }
+        out.push(ch);
+    }
+    out
+}
+
 fn trim_preview(line: &str) -> String {
     let mut out = line.trim().to_string();
     if out.len() > 200 {
@@ -3936,9 +4110,10 @@ thread_local! {
     static SWALLOW_ENTER_CHAR: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
-fn create_editor(parent: HWND, instance: HINSTANCE) -> Result<HWND> {
+fn create_editor(parent: HWND, instance: HINSTANCE, zoom: i32) -> Result<HWND> {
     let editor = scintilla::create_window(parent, instance)?;
     scintilla::initialize(editor);
+    scintilla::set_zoom(editor, zoom);
     unsafe {
         let _ = SetWindowSubclass(editor, Some(editor_subclass_proc), EDITOR_SUBCLASS_ID, 0);
     }
@@ -4263,8 +4438,9 @@ fn create_doc_from_path(
     wrap_enabled: bool,
     large_file_threshold_mb: u32,
     large_file_disable_word_wrap: bool,
+    zoom: i32,
 ) -> Result<DocTab> {
-    let editor = create_editor(parent, instance)?;
+    let editor = create_editor(parent, instance, zoom)?;
     let mut doc = Document::new_empty();
     doc.backup_path = session::backup_path_for_id(doc.id)?;
     let mut doc_tab = DocTab {
@@ -4338,7 +4514,7 @@ fn load_file_into_doc(
 }
 
 fn create_empty_tab(hwnd: HWND, instance: HINSTANCE, state: &mut AppState) -> Result<()> {
-    let editor = create_editor(hwnd, instance)?;
+    let editor = create_editor(hwnd, instance, state.ui_settings.zoom_level)?;
     let mut doc = Document::new_empty();
     doc.display_name = next_untitled_name(state);
     doc.backup_path = session::backup_path_for_id(doc.id)?;
@@ -4374,7 +4550,7 @@ fn duplicate_active_tab(hwnd: HWND, state: &mut AppState) -> Result<()> {
     let text = scintilla::get_text(source.editor)?;
     let strike_ranges = collect_strike_ranges(source.editor);
     let instance = module_instance()?;
-    let editor = create_editor(hwnd, instance)?;
+    let editor = create_editor(hwnd, instance, state.ui_settings.zoom_level)?;
     scintilla::set_text(editor, &text)?;
     scintilla::set_eol_mode(editor, source.doc.eol);
     let encoded_size = document::encoded_size_for_text(&text, source.doc.encoding);
@@ -5360,7 +5536,7 @@ fn restore_session_entry(
     };
 
     let instance = module_instance()?;
-    let editor = create_editor(hwnd, instance)?;
+    let editor = create_editor(hwnd, instance, state.ui_settings.zoom_level)?;
     scintilla::set_text(editor, &text)?;
 
     let mut doc = Document::with_id(entry.id);
@@ -6551,6 +6727,30 @@ fn toggle_word_wrap(hwnd: HWND, state: &mut AppState) {
     set_word_wrap(hwnd, state, enabled);
 }
 
+fn clamp_zoom(level: i32) -> i32 {
+    level.clamp(settings::MIN_ZOOM_LEVEL, settings::MAX_ZOOM_LEVEL)
+}
+
+/// Applies one app-wide zoom level to every editor and persists it. Scintilla
+/// only raises `SCN_ZOOM` when a control's level actually changes, and the
+/// early return below stops the re-entrant notifications from the propagation
+/// pass, so wheel-zooming one tab converges instead of looping.
+fn set_app_zoom(state: &mut AppState, level: i32) {
+    let level = clamp_zoom(level);
+    if state.ui_settings.zoom_level == level {
+        return;
+    }
+    state.ui_settings.zoom_level = level;
+    for doc_tab in &state.docs {
+        scintilla::set_zoom(doc_tab.editor, level);
+    }
+    persist_ui_settings(state);
+}
+
+fn adjust_zoom(state: &mut AppState, delta: i32) {
+    set_app_zoom(state, state.ui_settings.zoom_level.saturating_add(delta));
+}
+
 fn set_word_wrap(hwnd: HWND, state: &mut AppState, enabled: bool) {
     state.word_wrap_enabled = enabled;
     for doc_tab in &mut state.docs {
@@ -6712,6 +6912,21 @@ fn update_wrap_menu(hwnd: HWND, state: &AppState) {
         return;
     }
     set_menu_check(menu, IDM_VIEW_WORD_WRAP, state.word_wrap_enabled);
+}
+
+fn update_file_menu(hwnd: HWND, state: &AppState) {
+    let menu = unsafe { GetMenu(hwnd) };
+    if menu.0 == 0 {
+        return;
+    }
+    let reload_state = if current_document_path(state).is_some() {
+        MF_ENABLED
+    } else {
+        MF_GRAYED
+    };
+    unsafe {
+        EnableMenuItem(menu, IDM_FILE_RELOAD as u32, MF_BYCOMMAND | reload_state);
+    }
 }
 
 fn update_copy_path_menu(hwnd: HWND, state: &AppState) {
@@ -7908,6 +8123,23 @@ mod tests {
         assert_eq!(count_words("hello_world"), 1);
         assert_eq!(count_words("one-two"), 2);
         assert_eq!(count_words(""), 0);
+    }
+
+    #[test]
+    fn format_thousands_groups_digits() {
+        assert_eq!(format_thousands(0), "0");
+        assert_eq!(format_thousands(999), "999");
+        assert_eq!(format_thousands(1000), "1,000");
+        assert_eq!(format_thousands(1234), "1,234");
+        assert_eq!(format_thousands(1234567), "1,234,567");
+    }
+
+    #[test]
+    fn clamp_zoom_bounds() {
+        assert_eq!(clamp_zoom(-11), settings::MIN_ZOOM_LEVEL);
+        assert_eq!(clamp_zoom(21), settings::MAX_ZOOM_LEVEL);
+        assert_eq!(clamp_zoom(0), 0);
+        assert_eq!(clamp_zoom(5), 5);
     }
 
     #[test]

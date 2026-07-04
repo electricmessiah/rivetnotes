@@ -21,6 +21,10 @@ pub const MAX_LARGE_FILE_THRESHOLD_MB: u32 = 1024;
 pub const DEFAULT_LARGE_FILE_DISABLE_WORD_WRAP: bool = true;
 pub const DEFAULT_LARGE_FILE_DISABLE_SMART_HIGHLIGHT: bool = true;
 pub const MAX_RECENT_FILES: usize = 10;
+pub const DEFAULT_ZOOM_LEVEL: i32 = 0;
+/// Scintilla's supported zoom range (points added to the base font size).
+pub const MIN_ZOOM_LEVEL: i32 = -10;
+pub const MAX_ZOOM_LEVEL: i32 = 20;
 
 #[derive(Debug, Copy, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "lowercase")]
@@ -65,6 +69,10 @@ pub struct UiSettings {
     /// `settings.json`: most-recently-opened file paths, newest first.
     #[serde(default)]
     pub recent_files: Vec<String>,
+    /// `settings.json`: app-wide editor zoom level in points, clamped to
+    /// [`MIN_ZOOM_LEVEL`]..=[`MAX_ZOOM_LEVEL`].
+    #[serde(default)]
+    pub zoom_level: i32,
 }
 
 impl Default for UiSettings {
@@ -80,6 +88,7 @@ impl Default for UiSettings {
             large_file_disable_word_wrap: DEFAULT_LARGE_FILE_DISABLE_WORD_WRAP,
             large_file_disable_smart_highlight: DEFAULT_LARGE_FILE_DISABLE_SMART_HIGHLIGHT,
             recent_files: Vec::new(),
+            zoom_level: DEFAULT_ZOOM_LEVEL,
         }
     }
 }
@@ -110,6 +119,8 @@ struct UiSettingsWire {
     large_file_allow_smart_highlight: Option<bool>,
     #[serde(default)]
     recent_files: Vec<String>,
+    #[serde(default)]
+    zoom_level: i32,
 }
 
 impl From<UiSettingsWire> for UiSettings {
@@ -131,6 +142,7 @@ impl From<UiSettingsWire> for UiSettings {
                 .or_else(|| value.large_file_allow_smart_highlight.map(|allow| !allow))
                 .unwrap_or(DEFAULT_LARGE_FILE_DISABLE_SMART_HIGHLIGHT),
             recent_files: value.recent_files,
+            zoom_level: value.zoom_level,
         }
     }
 }
@@ -161,6 +173,7 @@ impl UiSettings {
             .large_file_threshold_mb
             .clamp(MIN_LARGE_FILE_THRESHOLD_MB, MAX_LARGE_FILE_THRESHOLD_MB);
         self.recent_files.truncate(MAX_RECENT_FILES);
+        self.zoom_level = self.zoom_level.clamp(MIN_ZOOM_LEVEL, MAX_ZOOM_LEVEL);
         self
     }
 }
@@ -337,6 +350,7 @@ mod tests {
             large_file_disable_word_wrap: true,
             large_file_disable_smart_highlight: true,
             recent_files: vec!["C:\\a.txt".to_string(), "C:\\b.md".to_string()],
+            zoom_level: 3,
         };
         let json = serde_json::to_string_pretty(&settings).unwrap();
         assert!(json.contains("\"tab_placement\": \"right\""));
@@ -347,6 +361,7 @@ mod tests {
         assert!(json.contains("\"large_file_threshold_mb\": 50"));
         assert!(json.contains("\"large_file_disable_word_wrap\": true"));
         assert!(json.contains("\"large_file_disable_smart_highlight\": true"));
+        assert!(json.contains("\"zoom_level\": 3"));
 
         let parsed: UiSettings = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed, settings);
@@ -393,6 +408,17 @@ mod tests {
             assert_eq!(loaded.vertical_tab_width_px, MAX_VERTICAL_TAB_WIDTH_PX);
             assert_eq!(loaded.editor_dark, DEFAULT_EDITOR_DARK);
             assert_eq!(loaded.large_file_threshold_mb, MIN_LARGE_FILE_THRESHOLD_MB);
+        });
+    }
+
+    #[test]
+    fn load_clamps_zoom_from_file() {
+        with_temp_local_appdata(|| {
+            let path = settings_file_path().unwrap();
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(&path, r#"{ "zoom_level": 99 }"#).unwrap();
+            let loaded = load_settings().unwrap();
+            assert_eq!(loaded.zoom_level, MAX_ZOOM_LEVEL);
         });
     }
 

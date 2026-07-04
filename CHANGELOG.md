@@ -7,6 +7,26 @@ The format is based on Keep a Changelog, and this project adheres to SemVer.
 
 - TBD.
 
+## [0.4.20] - 2026-07-04
+
+### View
+
+- **Zoom In / Out / Reset.** `Ctrl+=` / `Ctrl+-` / `Ctrl+0` (numpad `+`/`-`
+  work too), plus View-menu items. One zoom level applies to every tab —
+  Ctrl+mousewheel zooming is folded back into the shared level so tabs never
+  drift apart. The level is persisted in `settings.json` and clamped to
+  Scintilla's -10..20 range.
+- **Word count in the status bar.** The already-computed per-tab word count
+  (250 ms debounce) is now shown as `Words: 1,234` between the selection and
+  EOL segments. Blank in Large File Mode, where counting is suppressed.
+
+### File
+
+- **Reload from Disk.** New File-menu command re-reads the active tab's file.
+  Asks for confirmation before discarding unsaved changes, preserves the
+  caret position (the automatic external-change reload now does too), and is
+  grayed out for Untitled tabs.
+
 ## [0.4.19] - 2026-07-04
 
 ### Windows shell integration

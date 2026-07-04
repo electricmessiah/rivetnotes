@@ -22,6 +22,10 @@ implemented deeply instead of spreading effort across a large plugin surface.
 - Resizable vertical tab panel with persisted width
 - Dirty document indicators in both top and vertical tab views
 - Word wrap toggle and `Always On Top` toggle in the `View` menu
+- Zoom (menu, shortcuts, or Ctrl+mousewheel) shared across all tabs and
+  persisted between sessions
+- Live word count in the status bar
+- `Reload from Disk` in the `File` menu (with unsaved-changes confirmation)
 
 ### Search and Navigation
 
@@ -72,6 +76,7 @@ implemented deeply instead of spreading effort across a large plugin surface.
 | Find next / previous | `F3` / `Shift+F3` |
 | Go to line | `Ctrl+G` |
 | Uppercase / Lowercase | `Ctrl+Shift+U` / `Ctrl+U` |
+| Zoom in / out / reset | `Ctrl+=` / `Ctrl+-` / `Ctrl+0` |
 
 ## Installation
 

@@ -85,6 +85,8 @@ const SCI_SETSEARCHFLAGS: u32 = 2198;
 const SCI_LOWERCASE: u32 = 2340;
 const SCI_UPPERCASE: u32 = 2341;
 const SCI_USEPOPUP: u32 = 2371;
+const SCI_SETZOOM: u32 = 2373;
+const SCI_GETZOOM: u32 = 2374;
 const SCI_SETEOLMODE: u32 = 2031;
 const SCI_GETEOLMODE: u32 = 2030;
 const SCI_SETWRAPMODE: u32 = 2268;
@@ -746,6 +748,15 @@ pub fn move_line_down(hwnd: HWND) {
 
 pub fn indent_selection(hwnd: HWND) {
     send_message(hwnd, SCI_TAB, 0, 0);
+}
+
+/// Zoom is points added to the base font size; Scintilla supports -10..=20.
+pub fn set_zoom(hwnd: HWND, zoom: i32) {
+    send_message(hwnd, SCI_SETZOOM, zoom as usize, 0);
+}
+
+pub fn get_zoom(hwnd: HWND) -> i32 {
+    send_message(hwnd, SCI_GETZOOM, 0, 0).0 as i32
 }
 
 pub fn outdent_selection(hwnd: HWND) {
