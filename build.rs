@@ -159,10 +159,15 @@ fn main() {
     #[cfg(windows)]
     {
         let icon = PathBuf::from("assets").join("rivet.ico");
+        let manifest = PathBuf::from("assets").join("rivet.manifest");
         println!("cargo:rerun-if-changed={}", icon.display());
+        println!("cargo:rerun-if-changed={}", manifest.display());
         if icon.exists() {
             let mut res = winres::WindowsResource::new();
             res.set_icon(icon.to_string_lossy().as_ref());
+            if manifest.exists() {
+                res.set_manifest_file(manifest.to_string_lossy().as_ref());
+            }
             res.compile().expect("Failed to compile Windows resources");
         }
     }

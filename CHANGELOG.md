@@ -7,6 +7,19 @@ The format is based on Keep a Changelog, and this project adheres to SemVer.
 
 - TBD.
 
+## [0.4.21] - 2026-07-04
+
+### Fixed
+
+- **Startup failure "Invalid access to memory location (0x800703E6)" on some
+  Windows 11 machines** (#1). The executable shipped without an application
+  manifest, so it ran against legacy comctl32 v5.82, where
+  `InitCommonControlsEx` can genuinely fail — and its unreliable error code
+  aborted startup with a cryptic message. Rivet now embeds a proper manifest
+  (Common Controls v6, Windows 10/11 supportedOS, PerMonitorV2 DPI,
+  long-path awareness), treats `InitCommonControlsEx` failure as non-fatal,
+  and reports the failing call by name in every startup error.
+
 ## [0.4.20] - 2026-07-04
 
 ### View

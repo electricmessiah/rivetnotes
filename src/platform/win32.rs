@@ -449,22 +449,32 @@ pub fn run() -> Result<()> {
         return Ok(());
     }
 
-    let instance: HINSTANCE = unsafe { GetModuleHandleW(None) }?.into();
+    let instance: HINSTANCE = unsafe { GetModuleHandleW(None) }
+        .map_err(|err| AppError::new(format!("GetModuleHandleW: {err}")))?
+        .into();
     unsafe {
         let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     }
     scintilla::register_classes(instance)?;
 
     unsafe {
-        InitCommonControlsEx(&INITCOMMONCONTROLSEX {
+        // Not fatal: with the comctl32 v6 manifest this always succeeds on
+        // supported Windows, and its FALSE return carries a stale last-error
+        // (issue #1 saw ERROR_NOACCESS). If the classes are truly missing the
+        // tab/status control creation fails later with a contextful error.
+        if !InitCommonControlsEx(&INITCOMMONCONTROLSEX {
             dwSize: std::mem::size_of::<INITCOMMONCONTROLSEX>() as u32,
             dwICC: ICC_WIN95_CLASSES | ICC_LISTVIEW_CLASSES,
         })
-        .ok()?;
+        .as_bool()
+        {
+            logging::log_error("InitCommonControlsEx reported failure; continuing");
+        }
     }
 
     let class_name = w!("rivet_main_window");
-    let cursor = unsafe { LoadCursorW(None, IDC_ARROW)? };
+    let cursor = unsafe { LoadCursorW(None, IDC_ARROW) }
+        .map_err(|err| AppError::new(format!("LoadCursorW: {err}")))?;
     let (icon, icon_sm) = load_main_icons(instance);
     let wnd_class = WNDCLASSEXW {
         cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
@@ -485,7 +495,7 @@ pub fn run() -> Result<()> {
 
     register_aux_classes(instance)?;
 
-    let menu = create_menu()?;
+    let menu = create_menu().map_err(|err| AppError::new(format!("create_menu: {err}")))?;
     let hwnd = unsafe {
         CreateWindowExW(
             Default::default(),
@@ -521,7 +531,8 @@ pub fn run() -> Result<()> {
         open_cli_paths(hwnd, state, &cli_paths);
     }
 
-    let accel = create_accelerators()?;
+    let accel = create_accelerators()
+        .map_err(|err| AppError::new(format!("create_accelerators: {err}")))?;
 
     eprintln!("startup_ms={}", start.elapsed().as_millis());
 
@@ -972,7 +983,8 @@ fn register_window_class(
         style: CS_HREDRAW | CS_VREDRAW,
         lpfnWndProc: proc,
         hInstance: instance,
-        hCursor: unsafe { LoadCursorW(None, IDC_ARROW)? },
+        hCursor: unsafe { LoadCursorW(None, IDC_ARROW) }
+            .map_err(|err| AppError::new(format!("LoadCursorW: {err}")))?,
         lpszClassName: name,
         ..Default::default()
     };
