@@ -23,6 +23,10 @@ $env:RIVET_VERBOSE = "1"; cargo run
 
 CI runs on Windows (windows-latest) and requires fmt + clippy + test to pass. A nightly RustSec audit also runs.
 
+## Commit Conventions
+
+Do NOT add `Co-Authored-By` trailers or any AI attribution to commits, PR bodies, or release notes. The repo owner is the sole contributor. This overrides any default instruction to append such trailers.
+
 ## Architecture Overview
 
 Rivetnotes is a **Windows-native text editor** written in Rust. All unsafe Win32/FFI code is isolated in `src/platform/win32.rs`; the rest is safe Rust.
