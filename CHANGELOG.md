@@ -7,6 +7,27 @@ The format is based on Keep a Changelog, and this project adheres to SemVer.
 
 - TBD.
 
+## [0.4.19] - 2026-07-04
+
+### Windows shell integration
+
+- **Command-line file opening.** `rivet.exe <file> [more files]` now opens the
+  given files as tabs (on top of the restored session, as the active tab).
+  Relative paths are resolved against the launch directory.
+- **Single instance.** Launching Rivet while it is already running forwards
+  the files to the existing window (new tabs) and brings it to the
+  foreground instead of starting a second window. If forwarding fails, a new
+  window opens as a fallback.
+- **"Open with Rivet" context menu.** The installer registers an
+  "Open with Rivet" entry (with icon) on the Explorer right-click menu for
+  all file types.
+- **Default-editor registration.** The installer registers Rivet in the
+  "Open with" dialog and Settings > Default apps for common text formats
+  (`.txt`, `.md`, `.log`, `.json`, `.xml`, `.yaml`, `.ini`, `.csv`, `.ps1`,
+  `.py`, `.rs`, and more), so it can be chosen as the default editor.
+  All registry keys are removed on uninstall. Portable builds get the CLI
+  and single-instance behavior but no registry integration.
+
 ## [0.4.18] - 2026-06-13
 
 ### Markdown & syntax

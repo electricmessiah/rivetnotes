@@ -16,6 +16,7 @@ use windows::Win32::Graphics::Gdi::{
     SelectObject, SetBkMode, SetTextColor, TRANSPARENT,
 };
 use windows::Win32::System::Com::CoTaskMemFree;
+use windows::Win32::System::DataExchange::COPYDATASTRUCT;
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::Controls::Dialogs::{
     CommDlgExtendedError, GetOpenFileNameW, GetSaveFileNameW, OFN_EXPLORER, OFN_FILEMUSTEXIST,
@@ -57,19 +58,19 @@ use windows::Win32::UI::WindowsAndMessaging::{
     GetParent, GetSubMenu, GetSystemMetrics, GetWindowLongPtrW, GetWindowRect,
     GetWindowTextLengthW, GetWindowTextW, HACCEL, HICON, HMENU, HWND_NOTOPMOST, HWND_TOPMOST,
     ICON_BIG, ICON_SMALL, ICON_SMALL2, IDC_ARROW, IDC_SIZEWE, IDI_APPLICATION, IDNO, IDYES,
-    IMAGE_ICON, KillTimer, LB_ADDSTRING, LB_GETCURSEL, LB_RESETCONTENT, LBN_DBLCLK,
+    IMAGE_ICON, IsIconic, KillTimer, LB_ADDSTRING, LB_GETCURSEL, LB_RESETCONTENT, LBN_DBLCLK,
     LBS_NOINTEGRALHEIGHT, LBS_NOTIFY, LR_DEFAULTCOLOR, LR_SHARED, LoadCursorW, LoadIconW,
     LoadImageW, MB_ICONERROR, MB_ICONINFORMATION, MB_ICONWARNING, MB_OK, MB_YESNO, MB_YESNOCANCEL,
     MENUBARINFO, MENUITEMINFOW, MF_BYCOMMAND, MF_BYPOSITION, MF_CHECKED, MF_ENABLED, MF_GRAYED,
     MF_POPUP, MF_SEPARATOR, MF_STRING, MF_UNCHECKED, MIIM_STRING, MSG, MessageBoxW, OBJID_MENU,
     PostQuitMessage, RegisterClassExW, SM_CXICON, SM_CXSMICON, SM_CYICON, SM_CYSMICON, SW_HIDE,
-    SW_SHOW, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER,
+    SW_RESTORE, SW_SHOW, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER,
     SYSTEM_METRICS_INDEX, SendMessageW, SetClassLongPtrW, SetCursor, SetTimer, SetWindowLongPtrW,
     SetWindowPos, SetWindowTextW, ShowWindow, TPM_NONOTIFY, TPM_RETURNCMD, TPM_RIGHTBUTTON,
     TrackPopupMenu, TranslateAcceleratorW, TranslateMessage, WINDOW_STYLE, WM_ACTIVATEAPP,
-    WM_CAPTURECHANGED, WM_CHAR, WM_CLOSE, WM_COMMAND, WM_CONTEXTMENU, WM_CREATE, WM_CTLCOLORBTN,
-    WM_CTLCOLORDLG, WM_CTLCOLOREDIT, WM_CTLCOLORLISTBOX, WM_CTLCOLORSTATIC, WM_DESTROY,
-    WM_DROPFILES, WM_ERASEBKGND, WM_GETFONT, WM_GETICON, WM_INITMENUPOPUP, WM_KEYDOWN,
+    WM_CAPTURECHANGED, WM_CHAR, WM_CLOSE, WM_COMMAND, WM_CONTEXTMENU, WM_COPYDATA, WM_CREATE,
+    WM_CTLCOLORBTN, WM_CTLCOLORDLG, WM_CTLCOLOREDIT, WM_CTLCOLORLISTBOX, WM_CTLCOLORSTATIC,
+    WM_DESTROY, WM_DROPFILES, WM_ERASEBKGND, WM_GETFONT, WM_GETICON, WM_INITMENUPOPUP, WM_KEYDOWN,
     WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONUP, WM_MOUSEMOVE, WM_NCDESTROY, WM_NOTIFY, WM_PAINT,
     WM_SETCURSOR, WM_SETICON, WM_SIZE, WM_TIMER, WNDCLASSEXW, WS_BORDER, WS_CAPTION, WS_CHILD,
     WS_CLIPSIBLINGS, WS_OVERLAPPEDWINDOW, WS_SYSMENU, WS_TABSTOP, WS_VISIBLE, WS_VSCROLL,
@@ -91,6 +92,7 @@ use crate::error::{AppError, Result};
 use crate::logging;
 use crate::platform::clipboard::{Clipboard, WinClipboard};
 use crate::platform::dark_mode;
+use crate::platform::single_instance;
 use crate::textops::trim::{trim_edges_spaces_tabs, trim_line_preserve_eol};
 use regex::RegexBuilder;
 
@@ -430,6 +432,13 @@ struct AppState {
 pub fn run() -> Result<()> {
     let start = Instant::now();
 
+    let cli_paths = single_instance::cli_paths();
+    let instance_guard = single_instance::acquire();
+    if instance_guard.already_running && single_instance::forward_to_existing(&cli_paths) {
+        // Files (if any) were handed to the existing window; exit quietly.
+        return Ok(());
+    }
+
     let instance: HINSTANCE = unsafe { GetModuleHandleW(None) }?.into();
     unsafe {
         let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
@@ -492,6 +501,14 @@ pub fn run() -> Result<()> {
 
     unsafe {
         ShowWindow(hwnd, SW_SHOW);
+    }
+
+    // Session restore already ran inside WM_CREATE, so command-line files
+    // land on top of the restored tabs as the active tab.
+    if !cli_paths.is_empty()
+        && let Some(state) = get_state(hwnd)
+    {
+        open_cli_paths(hwnd, state, &cli_paths);
     }
 
     let accel = create_accelerators()?;
@@ -1995,6 +2012,42 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
             }
             LRESULT(0)
         }
+        WM_COPYDATA => {
+            let cds = lparam.0 as *const COPYDATASTRUCT;
+            if cds.is_null() {
+                return unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) };
+            }
+            let (dw_data, bytes) = unsafe {
+                let cds = &*cds;
+                let bytes = if cds.lpData.is_null() || cds.cbData == 0 {
+                    Vec::new()
+                } else {
+                    // Copy out immediately; lpData is only valid while the
+                    // sender blocks in SendMessage. Byte-wise because the
+                    // foreign pointer has no alignment guarantee.
+                    std::slice::from_raw_parts(cds.lpData as *const u8, cds.cbData as usize)
+                        .to_vec()
+                };
+                (cds.dwData, bytes)
+            };
+            if dw_data != single_instance::COPYDATA_OPEN_FILES {
+                return unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) };
+            }
+            let units: Vec<u16> = bytes
+                .chunks_exact(2)
+                .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+                .collect();
+            let paths = single_instance::decode_paths(&units);
+            if let Some(state) = get_state(hwnd) {
+                open_cli_paths(hwnd, state, &paths);
+            }
+            unsafe {
+                if IsIconic(hwnd).as_bool() {
+                    ShowWindow(hwnd, SW_RESTORE);
+                }
+            }
+            LRESULT(1)
+        }
         WM_DROPFILES => {
             if let Some(state) = get_state(hwnd) {
                 let hdrop = HDROP(wparam.0 as isize);
@@ -2501,6 +2554,39 @@ fn open_path_new_tab(
         note_recent_file(hwnd, state, &opened);
     }
     Ok(())
+}
+
+/// Opens paths passed on the command line or forwarded from a second
+/// instance. A lone pristine Untitled tab is replaced by the opened files.
+fn open_cli_paths(hwnd: HWND, state: &mut AppState, paths: &[PathBuf]) {
+    let lone_pristine_tab = state.docs.len() == 1
+        && state
+            .docs
+            .first()
+            .is_some_and(|doc_tab| doc_tab.doc.path.is_none() && !doc_tab.doc.is_dirty)
+        && state
+            .docs
+            .first()
+            .is_some_and(|doc_tab| scintilla::get_length(doc_tab.editor) == 0);
+    let mut opened_any = false;
+    for path in paths {
+        match open_path_new_tab(hwnd, state, path.clone(), None, None, None, None) {
+            Ok(()) => opened_any = true,
+            Err(err) => {
+                logging::log_error(&format!(
+                    "cli_open_failed path={} err={err}",
+                    path.display()
+                ));
+                show_error("Rivet error", &err.to_string());
+            }
+        }
+    }
+    if opened_any
+        && lone_pristine_tab
+        && let Err(err) = close_tab(hwnd, state, 0)
+    {
+        logging::log_error(&format!("cli_close_placeholder_failed err={err}"));
+    }
 }
 
 fn save_document(

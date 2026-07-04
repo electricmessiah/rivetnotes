@@ -79,6 +79,18 @@ implemented deeply instead of spreading effort across a large plugin surface.
 - Portable: download `rivet-<version>-win64-portable.zip` from GitHub Releases
 - If SmartScreen warns, use `More info` then `Run anyway`
 
+## Shell Integration
+
+- Open files from the command line: `rivet.exe <file> [more files]`
+- Single instance: files launched while Rivet is running open as tabs in the
+  existing window
+- The installer adds an `Open with Rivet` Explorer context menu entry and
+  registers Rivet in the `Open with` dialog and
+  `Settings > Default apps` so it can be set as the default editor for
+  text-like file types; uninstalling removes the registration
+- The portable build supports the command line and single-instance behavior
+  but does not register context menu or default-app entries
+
 ## Build From Source
 
 ### Requirements
