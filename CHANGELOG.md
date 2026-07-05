@@ -7,6 +7,20 @@ The format is based on Keep a Changelog, and this project adheres to SemVer.
 
 - TBD.
 
+## [0.4.22] - 2026-07-05
+
+### View
+
+- **Window geometry is remembered across restarts.** Rivet now reopens with
+  the same position, size, and maximized state it was closed with. The
+  placement is checkpointed with the session (every ~7 s and on exit) and
+  restored via `SetWindowPlacement`, so a window closed while minimized
+  reopens at its normal size, and one closed maximized reopens maximized
+  with its pre-maximize rect intact. If the saved position no longer lands
+  on a connected monitor (or the session file was hand-edited into
+  nonsense), Rivet falls back to the OS default placement. Always On Top
+  was already persisted and continues to work unchanged.
+
 ## [0.4.21] - 2026-07-04
 
 ### Fixed
