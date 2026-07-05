@@ -7,13 +7,13 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use windows::Win32::Foundation::{
     BOOL, COLORREF, ERROR_CLASS_ALREADY_EXISTS, GetLastError, HINSTANCE, HWND, LPARAM, LRESULT,
-    POINT, WPARAM,
+    POINT, RECT, WPARAM,
 };
 use windows::Win32::Graphics::Gdi::{
     BeginPaint, CreatePen, CreateSolidBrush, DT_CENTER, DT_END_ELLIPSIS, DT_HIDEPREFIX,
     DT_NOPREFIX, DT_SINGLELINE, DT_VCENTER, DeleteObject, DrawTextW, EndPaint, FillRect, HBRUSH,
-    HDC, HGDIOBJ, InvalidateRect, LineTo, MoveToEx, PAINTSTRUCT, PS_SOLID, ScreenToClient,
-    SelectObject, SetBkMode, SetTextColor, TRANSPARENT,
+    HDC, HGDIOBJ, InvalidateRect, LineTo, MONITOR_DEFAULTTONULL, MonitorFromRect, MoveToEx,
+    PAINTSTRUCT, PS_SOLID, ScreenToClient, SelectObject, SetBkMode, SetTextColor, TRANSPARENT,
 };
 use windows::Win32::System::Com::CoTaskMemFree;
 use windows::Win32::System::DataExchange::COPYDATASTRUCT;
@@ -55,7 +55,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     DestroyMenu, DestroyWindow, DispatchMessageW, ES_AUTOHSCROLL, ES_NUMBER, EnableMenuItem, FALT,
     FCONTROL, FSHIFT, FVIRTKEY, GCLP_HICON, GCLP_HICONSM, GWLP_USERDATA, GetClientRect,
     GetCursorPos, GetMenu, GetMenuBarInfo, GetMenuItemCount, GetMenuItemInfoW, GetMessageW,
-    GetParent, GetSubMenu, GetSystemMetrics, GetWindowLongPtrW, GetWindowRect,
+    GetParent, GetSubMenu, GetSystemMetrics, GetWindowLongPtrW, GetWindowPlacement, GetWindowRect,
     GetWindowTextLengthW, GetWindowTextW, HACCEL, HICON, HMENU, HWND_NOTOPMOST, HWND_TOPMOST,
     ICON_BIG, ICON_SMALL, ICON_SMALL2, IDC_ARROW, IDC_SIZEWE, IDI_APPLICATION, IDNO, IDYES,
     IMAGE_ICON, IsIconic, KillTimer, LB_ADDSTRING, LB_GETCURSEL, LB_RESETCONTENT, LBN_DBLCLK,
@@ -64,16 +64,18 @@ use windows::Win32::UI::WindowsAndMessaging::{
     MENUBARINFO, MENUITEMINFOW, MF_BYCOMMAND, MF_BYPOSITION, MF_CHECKED, MF_ENABLED, MF_GRAYED,
     MF_POPUP, MF_SEPARATOR, MF_STRING, MF_UNCHECKED, MIIM_STRING, MSG, MessageBoxW, OBJID_MENU,
     PostQuitMessage, RegisterClassExW, SM_CXICON, SM_CXSMICON, SM_CYICON, SM_CYSMICON, SW_HIDE,
-    SW_RESTORE, SW_SHOW, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER,
-    SYSTEM_METRICS_INDEX, SendMessageW, SetClassLongPtrW, SetCursor, SetTimer, SetWindowLongPtrW,
-    SetWindowPos, SetWindowTextW, ShowWindow, TPM_NONOTIFY, TPM_RETURNCMD, TPM_RIGHTBUTTON,
-    TrackPopupMenu, TranslateAcceleratorW, TranslateMessage, WINDOW_STYLE, WM_ACTIVATEAPP,
-    WM_CAPTURECHANGED, WM_CHAR, WM_CLOSE, WM_COMMAND, WM_CONTEXTMENU, WM_COPYDATA, WM_CREATE,
-    WM_CTLCOLORBTN, WM_CTLCOLORDLG, WM_CTLCOLOREDIT, WM_CTLCOLORLISTBOX, WM_CTLCOLORSTATIC,
-    WM_DESTROY, WM_DROPFILES, WM_ERASEBKGND, WM_GETFONT, WM_GETICON, WM_INITMENUPOPUP, WM_KEYDOWN,
-    WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONUP, WM_MOUSEMOVE, WM_NCDESTROY, WM_NOTIFY, WM_PAINT,
-    WM_SETCURSOR, WM_SETICON, WM_SIZE, WM_TIMER, WNDCLASSEXW, WS_BORDER, WS_CAPTION, WS_CHILD,
-    WS_CLIPSIBLINGS, WS_OVERLAPPEDWINDOW, WS_SYSMENU, WS_TABSTOP, WS_VISIBLE, WS_VSCROLL,
+    SW_RESTORE, SW_SHOW, SW_SHOWMAXIMIZED, SW_SHOWMINIMIZED, SW_SHOWNORMAL, SWP_FRAMECHANGED,
+    SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SYSTEM_METRICS_INDEX, SendMessageW,
+    SetClassLongPtrW, SetCursor, SetTimer, SetWindowLongPtrW, SetWindowPlacement, SetWindowPos,
+    SetWindowTextW, ShowWindow, TPM_NONOTIFY, TPM_RETURNCMD, TPM_RIGHTBUTTON, TrackPopupMenu,
+    TranslateAcceleratorW, TranslateMessage, WINDOW_STYLE, WINDOWPLACEMENT, WINDOWPLACEMENT_FLAGS,
+    WM_ACTIVATEAPP, WM_CAPTURECHANGED, WM_CHAR, WM_CLOSE, WM_COMMAND, WM_CONTEXTMENU, WM_COPYDATA,
+    WM_CREATE, WM_CTLCOLORBTN, WM_CTLCOLORDLG, WM_CTLCOLOREDIT, WM_CTLCOLORLISTBOX,
+    WM_CTLCOLORSTATIC, WM_DESTROY, WM_DROPFILES, WM_ERASEBKGND, WM_GETFONT, WM_GETICON,
+    WM_INITMENUPOPUP, WM_KEYDOWN, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONUP, WM_MOUSEMOVE,
+    WM_NCDESTROY, WM_NOTIFY, WM_PAINT, WM_SETCURSOR, WM_SETICON, WM_SIZE, WM_TIMER, WNDCLASSEXW,
+    WPF_RESTORETOMAXIMIZED, WS_BORDER, WS_CAPTION, WS_CHILD, WS_CLIPSIBLINGS, WS_OVERLAPPEDWINDOW,
+    WS_SYSMENU, WS_TABSTOP, WS_VISIBLE, WS_VSCROLL,
 };
 use windows::core::PWSTR;
 use windows::core::{HSTRING, PCWSTR, w};
@@ -420,6 +422,7 @@ struct AppState {
     editor_dark: bool,
     next_tab_runtime_id: i64,
     always_on_top: bool,
+    window_placement: Option<session::WindowPlacementData>,
     icon_big: HICON,
     icon_small: HICON,
     word_count_pending: bool,
@@ -519,8 +522,17 @@ pub fn run() -> Result<()> {
 
     set_window_icons(hwnd, instance);
 
-    unsafe {
-        ShowWindow(hwnd, SW_SHOW);
+    // Session restore ran inside WM_CREATE, so any saved window placement is
+    // already on the state. SetWindowPlacement shows the window itself; only
+    // fall back to the default show when no valid placement applies.
+    let placed = get_state(hwnd)
+        .and_then(|state| state.window_placement)
+        .map(|placement| apply_saved_window_placement(hwnd, &placement))
+        .unwrap_or(false);
+    if !placed {
+        unsafe {
+            ShowWindow(hwnd, SW_SHOW);
+        }
     }
 
     // Session restore already ran inside WM_CREATE, so command-line files
@@ -1701,7 +1713,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                                 doc_tab.doc.is_dirty = true;
                                 doc_tab.change_counter = doc_tab.change_counter.saturating_add(1);
                             }
-                            if let Err(err) = save_session_checkpoint(state) {
+                            if let Err(err) = save_session_checkpoint(hwnd, state) {
                                 logging::log_error(&format!(
                                     "session_save_after_strikeout_failed err={err}"
                                 ));
@@ -2102,7 +2114,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
             if wparam.0 == TIMER_SESSION_ID
                 && let Some(state) = get_state(hwnd)
             {
-                if let Err(err) = run_snapshot_tick(state, false) {
+                if let Err(err) = run_snapshot_tick(hwnd, state, false) {
                     logging::log_error(&format!("snapshot_tick_failed err={err}"));
                 }
             } else if wparam.0 == TIMER_FIND_RESULTS
@@ -2188,7 +2200,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
         }
         WM_DESTROY => {
             if let Some(state) = get_state(hwnd)
-                && let Err(err) = save_session_checkpoint(state)
+                && let Err(err) = save_session_checkpoint(hwnd, state)
             {
                 logging::log_error(&format!("session_save_on_destroy_failed err={err}"));
             }
@@ -2407,6 +2419,7 @@ fn create_children(hwnd: HWND, instance: HINSTANCE) -> Result<AppState> {
         editor_dark,
         next_tab_runtime_id: 1,
         always_on_top: session::DEFAULT_ALWAYS_ON_TOP,
+        window_placement: None,
         icon_big,
         icon_small,
         word_count_pending: false,
@@ -2817,7 +2830,7 @@ fn save_document_at(
     update_tab_text(state, index);
     update_title(hwnd, state);
     update_status(state);
-    if let Err(err) = save_session_checkpoint(state) {
+    if let Err(err) = save_session_checkpoint(hwnd, state) {
         logging::log_error(&format!("session_save_after_manual_save_failed err={err}"));
     }
     Ok(true)
@@ -5368,7 +5381,7 @@ fn close_tab(hwnd: HWND, state: &mut AppState, index: usize) -> Result<bool> {
     unsafe {
         InvalidateRect(state.tab_host.top_tabs, None, true);
     }
-    if let Err(err) = save_session_checkpoint(state) {
+    if let Err(err) = save_session_checkpoint(hwnd, state) {
         logging::log_error(&format!("session_save_after_tab_close_failed err={err}"));
     }
     Ok(true)
@@ -5445,6 +5458,37 @@ fn prompt_save_changes(hwnd: HWND, doc_tab: &DocTab) -> SaveChoice {
     }
 }
 
+fn apply_saved_window_placement(hwnd: HWND, placement: &session::WindowPlacementData) -> bool {
+    let rect = RECT {
+        left: placement.x,
+        top: placement.y,
+        right: placement.x + placement.width,
+        bottom: placement.y + placement.height,
+    };
+    // rcNormalPosition is captured in workspace coordinates while
+    // MonitorFromRect expects screen coordinates; the taskbar offset is
+    // acceptable for this "still on a monitor?" check, and the restore itself
+    // is exact because we feed back the coordinates we captured.
+    let monitor = unsafe { MonitorFromRect(&rect, MONITOR_DEFAULTTONULL) };
+    if monitor.0 == 0 {
+        return false;
+    }
+    let show_cmd = if placement.maximized {
+        SW_SHOWMAXIMIZED
+    } else {
+        SW_SHOWNORMAL
+    };
+    let wp = WINDOWPLACEMENT {
+        length: std::mem::size_of::<WINDOWPLACEMENT>() as u32,
+        flags: WINDOWPLACEMENT_FLAGS(0),
+        showCmd: show_cmd.0 as u32,
+        ptMinPosition: POINT { x: -1, y: -1 },
+        ptMaxPosition: POINT { x: -1, y: -1 },
+        rcNormalPosition: rect,
+    };
+    unsafe { SetWindowPlacement(hwnd, &wp).is_ok() }
+}
+
 fn restore_session(hwnd: HWND, mut state: AppState) -> Result<AppState> {
     let snapshot = match session::load_session() {
         Ok(snapshot) => snapshot,
@@ -5456,6 +5500,7 @@ fn restore_session(hwnd: HWND, mut state: AppState) -> Result<AppState> {
     state.backup_interval_seconds = snapshot.backup_interval_seconds.max(1);
     state.word_wrap_enabled = snapshot.word_wrap_enabled;
     state.always_on_top = snapshot.always_on_top;
+    state.window_placement = snapshot.window_placement;
 
     if !state.remember_session {
         return Ok(state);
@@ -5620,7 +5665,29 @@ fn restore_session_entry(
     Ok(())
 }
 
-fn save_session_checkpoint(state: &AppState) -> Result<()> {
+fn capture_window_placement(hwnd: HWND) -> Option<session::WindowPlacementData> {
+    let mut wp = WINDOWPLACEMENT {
+        length: std::mem::size_of::<WINDOWPLACEMENT>() as u32,
+        ..Default::default()
+    };
+    unsafe { GetWindowPlacement(hwnd, &mut wp).ok()? };
+    let rc = wp.rcNormalPosition;
+    // Never persist a minimized state: rcNormalPosition always holds the
+    // restored rect, and WPF_RESTORETOMAXIMIZED tells us whether a minimized
+    // window would restore to maximized.
+    let maximized = wp.showCmd == SW_SHOWMAXIMIZED.0 as u32
+        || (wp.showCmd == SW_SHOWMINIMIZED.0 as u32 && wp.flags.contains(WPF_RESTORETOMAXIMIZED));
+    session::WindowPlacementData {
+        x: rc.left,
+        y: rc.top,
+        width: rc.right - rc.left,
+        height: rc.bottom - rc.top,
+        maximized,
+    }
+    .sanitized()
+}
+
+fn save_session_checkpoint(hwnd: HWND, state: &AppState) -> Result<()> {
     if !state.remember_session {
         let mut data = session::SessionData::empty();
         data.remember_session = false;
@@ -5628,6 +5695,7 @@ fn save_session_checkpoint(state: &AppState) -> Result<()> {
         data.backup_interval_seconds = state.backup_interval_seconds.max(1);
         data.word_wrap_enabled = state.word_wrap_enabled;
         data.always_on_top = state.always_on_top;
+        data.window_placement = capture_window_placement(hwnd);
         data.active_tab_id = None;
         data.entries.clear();
         return session::save_session(&data);
@@ -5663,17 +5731,18 @@ fn save_session_checkpoint(state: &AppState) -> Result<()> {
     data.backup_interval_seconds = state.backup_interval_seconds.max(1);
     data.word_wrap_enabled = state.word_wrap_enabled;
     data.always_on_top = state.always_on_top;
+    data.window_placement = capture_window_placement(hwnd);
     data.active_tab_id = state.docs.get(state.active).map(|doc| doc.doc.id);
     data.entries = entries;
     session::save_session(&data)
 }
 
-fn run_snapshot_tick(state: &mut AppState, final_pass: bool) -> Result<()> {
+fn run_snapshot_tick(hwnd: HWND, state: &mut AppState, final_pass: bool) -> Result<()> {
     if state.session_snapshot_periodic_backup {
         backup_dirty_documents(state, final_pass)?;
     }
     if state.remember_session {
-        save_session_checkpoint(state)
+        save_session_checkpoint(hwnd, state)
     } else {
         Ok(())
     }
@@ -5715,7 +5784,7 @@ fn backup_doc_at_index(state: &mut AppState, index: usize, force: bool) -> Resul
 
 fn can_exit(hwnd: HWND, state: &mut AppState) -> Result<bool> {
     if state.session_snapshot_periodic_backup {
-        run_snapshot_tick(state, true)?;
+        run_snapshot_tick(hwnd, state, true)?;
         return Ok(true);
     }
     confirm_close_all(hwnd, state)
@@ -6777,7 +6846,7 @@ fn set_word_wrap(hwnd: HWND, state: &mut AppState, enabled: bool) {
         );
     }
     update_wrap_menu(hwnd, state);
-    if let Err(err) = save_session_checkpoint(state) {
+    if let Err(err) = save_session_checkpoint(hwnd, state) {
         logging::log_error(&format!("session_save_after_wrap_toggle_failed err={err}"));
     }
 }
@@ -6813,7 +6882,7 @@ fn set_always_on_top(hwnd: HWND, state: &mut AppState, enabled: bool) {
     state.always_on_top = enabled;
     update_always_on_top_menu(hwnd, state);
     apply_always_on_top(hwnd, enabled);
-    if let Err(err) = save_session_checkpoint(state) {
+    if let Err(err) = save_session_checkpoint(hwnd, state) {
         logging::log_error(&format!(
             "session_save_after_always_on_top_toggle_failed err={err}"
         ));

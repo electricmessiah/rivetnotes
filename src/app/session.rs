@@ -40,6 +40,33 @@ pub struct StrikeRange {
     pub end: i64,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WindowPlacementData {
+    pub x: i32,
+    pub y: i32,
+    pub width: i32,
+    pub height: i32,
+    #[serde(default)]
+    pub maximized: bool,
+}
+
+impl WindowPlacementData {
+    /// Rejects placements that could not have come from a real window:
+    /// hand-edited JSON or the -32000 coordinates of a minimized window.
+    pub fn sanitized(self) -> Option<Self> {
+        let coord_ok = |v: i32| (-32_000..=32_000).contains(&v);
+        if (200..=32_000).contains(&self.width)
+            && (120..=32_000).contains(&self.height)
+            && coord_ok(self.x)
+            && coord_ok(self.y)
+        {
+            Some(self)
+        } else {
+            None
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SessionEntry {
     #[serde(rename = "tab_id", alias = "id")]
@@ -84,6 +111,8 @@ pub struct SessionData {
     pub word_wrap_enabled: bool,
     #[serde(default = "default_always_on_top")]
     pub always_on_top: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub window_placement: Option<WindowPlacementData>,
     #[serde(default)]
     pub active_tab_id: Option<Uuid>,
     #[serde(default)]
@@ -100,6 +129,7 @@ impl SessionData {
             backup_interval_seconds: DEFAULT_BACKUP_INTERVAL_SECONDS,
             word_wrap_enabled: DEFAULT_WORD_WRAP_ENABLED,
             always_on_top: DEFAULT_ALWAYS_ON_TOP,
+            window_placement: None,
             active_tab_id: None,
             entries: Vec::new(),
         }
@@ -115,6 +145,9 @@ impl SessionData {
         if self.session_snapshot_periodic_backup && !self.remember_session {
             self.remember_session = true;
         }
+        self.window_placement = self
+            .window_placement
+            .and_then(WindowPlacementData::sanitized);
         if !self.remember_session {
             self.entries.clear();
             self.active_tab_id = None;
@@ -355,6 +388,13 @@ mod tests {
                 backup_interval_seconds: 7,
                 word_wrap_enabled: true,
                 always_on_top: true,
+                window_placement: Some(WindowPlacementData {
+                    x: 64,
+                    y: 48,
+                    width: 1024,
+                    height: 768,
+                    maximized: false,
+                }),
                 active_tab_id: Some(id),
                 entries: vec![SessionEntry {
                     id,
@@ -413,6 +453,121 @@ mod tests {
         }"#;
         let parsed: SessionData = serde_json::from_str(json).unwrap();
         assert!(!parsed.always_on_top);
+    }
+
+    #[test]
+    fn window_placement_round_trips_through_json() {
+        let data = SessionData {
+            window_placement: Some(WindowPlacementData {
+                x: 120,
+                y: 80,
+                width: 1200,
+                height: 800,
+                maximized: true,
+            }),
+            ..SessionData::empty()
+        };
+        let json = serde_json::to_string(&data).unwrap();
+        let parsed: SessionData = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.window_placement, data.window_placement);
+    }
+
+    #[test]
+    fn window_placement_defaults_none_when_missing() {
+        let json = r#"{
+            "schema_version":2,
+            "app_version":"0.4.21",
+            "remember_session":true,
+            "session_snapshot_periodic_backup":true,
+            "backup_interval_seconds":7,
+            "word_wrap_enabled":true,
+            "always_on_top":false,
+            "entries":[]
+        }"#;
+        let parsed: SessionData = serde_json::from_str(json).unwrap();
+        assert_eq!(parsed.window_placement, None);
+    }
+
+    #[test]
+    fn window_placement_sanitized_accepts_normal_rect() {
+        let placement = WindowPlacementData {
+            x: 100,
+            y: 100,
+            width: 1200,
+            height: 800,
+            maximized: false,
+        };
+        assert_eq!(placement.sanitized(), Some(placement));
+    }
+
+    #[test]
+    fn window_placement_sanitized_rejects_nonsense() {
+        let base = WindowPlacementData {
+            x: 100,
+            y: 100,
+            width: 1200,
+            height: 800,
+            maximized: false,
+        };
+        assert_eq!(WindowPlacementData { width: 0, ..base }.sanitized(), None);
+        assert_eq!(
+            WindowPlacementData {
+                width: -500,
+                ..base
+            }
+            .sanitized(),
+            None
+        );
+        assert_eq!(WindowPlacementData { height: 50, ..base }.sanitized(), None);
+        assert_eq!(
+            WindowPlacementData {
+                x: 1_000_000,
+                ..base
+            }
+            .sanitized(),
+            None
+        );
+        assert_eq!(
+            WindowPlacementData {
+                y: -100_000,
+                ..base
+            }
+            .sanitized(),
+            None
+        );
+    }
+
+    #[test]
+    fn normalized_drops_invalid_window_placement() {
+        let data = SessionData {
+            window_placement: Some(WindowPlacementData {
+                x: 99_999,
+                y: 0,
+                width: 1200,
+                height: 800,
+                maximized: false,
+            }),
+            ..SessionData::empty()
+        };
+        assert_eq!(data.normalized().window_placement, None);
+    }
+
+    #[test]
+    fn normalized_keeps_window_placement_without_remember_session() {
+        let placement = WindowPlacementData {
+            x: 10,
+            y: 20,
+            width: 900,
+            height: 600,
+            maximized: false,
+        };
+        let data = SessionData {
+            remember_session: false,
+            session_snapshot_periodic_backup: false,
+            window_placement: Some(placement),
+            ..SessionData::empty()
+        };
+        assert_eq!(data.normalized().window_placement, Some(placement));
     }
 
     #[test]
@@ -504,6 +659,7 @@ mod tests {
                 backup_interval_seconds: 7,
                 word_wrap_enabled: true,
                 always_on_top: false,
+                window_placement: None,
                 active_tab_id: Some(id),
                 entries: vec![SessionEntry {
                     id,
