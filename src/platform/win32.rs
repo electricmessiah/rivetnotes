@@ -436,7 +436,6 @@ struct AppState {
     session_snapshot_periodic_backup: bool,
     backup_interval_seconds: u32,
     word_wrap_enabled: bool,
-    next_untitled_index: usize,
     search_state: SearchState,
     search_dialog_mode: SearchDialogMode,
     find_dialog: Option<FindDialogState>,
@@ -2453,7 +2452,6 @@ fn create_children(hwnd: HWND, instance: HINSTANCE) -> Result<AppState> {
         session_snapshot_periodic_backup: session::DEFAULT_SESSION_SNAPSHOT_PERIODIC_BACKUP,
         backup_interval_seconds: session::DEFAULT_BACKUP_INTERVAL_SECONDS,
         word_wrap_enabled: session::DEFAULT_WORD_WRAP_ENABLED,
-        next_untitled_index: 1,
         search_state: SearchState {
             find_text: String::new(),
             replace_text: String::new(),
@@ -5685,9 +5683,6 @@ fn restore_session_entry(
         smart_highlight_truncated: false,
         lexer_override: None,
     };
-    if doc_tab.doc.path.is_none() {
-        update_next_untitled_index_from_name(state, &doc_tab.doc.display_name);
-    }
     apply_syntax_for_doc(&doc_tab, state.editor_dark);
     restore_strike_ranges(editor, &entry.strike_ranges);
     let index = add_tab(state, &tab_title(&doc_tab), doc_tab)?;
@@ -5826,21 +5821,12 @@ fn backup_interval_ms(interval_secs: u32) -> u32 {
     interval_secs.max(1).saturating_mul(1000)
 }
 
-fn next_untitled_name(state: &mut AppState) -> String {
-    let value = state.next_untitled_index;
-    state.next_untitled_index = state.next_untitled_index.saturating_add(1);
-    format!("new {value:03}")
-}
-
-fn update_next_untitled_index_from_name(state: &mut AppState, name: &str) {
-    if let Some(value) = name.strip_prefix("new ")
-        && let Ok(parsed) = value.trim().parse::<usize>()
-    {
-        let candidate = parsed.saturating_add(1);
-        if candidate > state.next_untitled_index {
-            state.next_untitled_index = candidate;
-        }
-    }
+fn next_untitled_name(_state: &mut AppState) -> String {
+    let st = unsafe { GetLocalTime() };
+    format!(
+        "{:04}-{:02}-{:02}-{:02}-{:02}",
+        st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute
+    )
 }
 
 fn ensure_doc_backup_path(doc: &mut Document) -> Result<()> {
