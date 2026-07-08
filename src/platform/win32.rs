@@ -5874,6 +5874,7 @@ fn save_file_dialog(hwnd: HWND, default_name: &str) -> Result<Option<PathBuf>> {
     let copy_len = default_wide.len().min(buffer.len() - 1);
     buffer[..copy_len].copy_from_slice(&default_wide[..copy_len]);
     let filter = w!("All Files\0*.*\0\0");
+    let def_ext = w!("txt");
 
     let mut ofn = OPENFILENAMEW {
         lStructSize: std::mem::size_of::<OPENFILENAMEW>() as u32,
@@ -5881,6 +5882,7 @@ fn save_file_dialog(hwnd: HWND, default_name: &str) -> Result<Option<PathBuf>> {
         lpstrFile: PWSTR(buffer.as_mut_ptr()),
         nMaxFile: buffer.len() as u32,
         lpstrFilter: PCWSTR(filter.as_ptr()),
+        lpstrDefExt: PCWSTR(def_ext.as_ptr()),
         Flags: OFN_EXPLORER | OFN_PATHMUSTEXIST | OFN_OVERWRITEPROMPT,
         ..Default::default()
     };
