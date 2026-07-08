@@ -4083,7 +4083,7 @@ fn count_words(text: &str) -> usize {
 fn current_date_time_stamp() -> String {
     let st = unsafe { GetLocalTime() };
     format!(
-        "{:04}/{:02}/{:02} {:02}:{:02}",
+        "{:04}-{:02}-{:02} {:02}:{:02}",
         st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute
     )
 }
