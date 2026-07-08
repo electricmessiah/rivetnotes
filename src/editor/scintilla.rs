@@ -608,8 +608,8 @@ pub fn create_window(parent: HWND, instance: HINSTANCE) -> Result<HWND> {
     Ok(hwnd)
 }
 
-pub fn apply_lexer(hwnd: HWND, lexer: LexerKind, dark: bool) {
-    apply_base_theme(hwnd, dark);
+pub fn apply_lexer(hwnd: HWND, lexer: LexerKind, dark: bool, font_name: &str, font_size: i32) {
+    apply_base_theme(hwnd, dark, font_name, font_size);
     set_lexer_by_name(hwnd, lexer_name(lexer));
     clear_keywords(hwnd);
     apply_fold_properties(hwnd);
@@ -979,7 +979,7 @@ fn lexer_name(lexer: LexerKind) -> &'static str {
     }
 }
 
-fn apply_base_theme(hwnd: HWND, dark: bool) {
+fn apply_base_theme(hwnd: HWND, dark: bool, font_name: &str, font_size: i32) {
     let (fore, back, sel_back, caret, caret_line) = if dark {
         (
             COLOR_DARK_FORE,
@@ -999,8 +999,8 @@ fn apply_base_theme(hwnd: HWND, dark: bool) {
     };
     set_style_fore(hwnd, STYLE_DEFAULT, fore);
     set_style_back(hwnd, STYLE_DEFAULT, back);
-    set_style_size(hwnd, STYLE_DEFAULT, 11);
-    set_style_font(hwnd, STYLE_DEFAULT, "Consolas");
+    set_style_size(hwnd, STYLE_DEFAULT, font_size.max(1) as usize);
+    set_style_font(hwnd, STYLE_DEFAULT, font_name);
     send_message(hwnd, SCI_STYLECLEARALL, 0, 0);
     send_message(hwnd, SCI_SETSELFORE, 1, fore as isize);
     send_message(hwnd, SCI_SETSELBACK, 1, sel_back as isize);
