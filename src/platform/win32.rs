@@ -2750,7 +2750,7 @@ fn save_document_at(
     encoding_override: Option<TextEncoding>,
     force_save_as: bool,
 ) -> Result<bool> {
-    let (encoding, existing_path, display_name) = {
+    let (encoding, existing_path, display_name, default_ext) = {
         let doc_tab = state
             .docs
             .get(index)
@@ -2759,10 +2759,14 @@ fn save_document_at(
             encoding_override.unwrap_or(doc_tab.doc.encoding),
             doc_tab.doc.path.clone(),
             doc_tab.doc.display_name.clone(),
+            doc_tab
+                .lexer_override
+                .and_then(extension_for_lexer)
+                .unwrap_or(".txt"),
         )
     };
     let path = if force_save_as || existing_path.is_none() {
-        match save_file_dialog(hwnd, &display_name)? {
+        match save_file_dialog(hwnd, &display_name, default_ext)? {
             Some(path) => path,
             None => return Ok(false),
         }
@@ -2995,6 +2999,12 @@ fn update_status(state: &AppState) {
         }
         if doc_tab.doc.is_dirty {
             flags.push('*');
+        }
+        if let Some(ext) = doc_tab.lexer_override.and_then(extension_for_lexer) {
+            if !flags.is_empty() {
+                flags.push(' ');
+            }
+            flags.push_str(ext);
         }
         if doc_tab.doc.large_file_mode {
             if !flags.is_empty() {
@@ -4459,6 +4469,26 @@ fn lexer_for_doc(doc: &Document) -> scintilla::LexerKind {
     }
 }
 
+/// Canonical file extension (with leading dot) for a selected language, for
+/// display and for prefilling the Save dialog. `None` for `Null` (no
+/// language selected / plain text).
+fn extension_for_lexer(kind: scintilla::LexerKind) -> Option<&'static str> {
+    match kind {
+        scintilla::LexerKind::Null => None,
+        scintilla::LexerKind::Cpp => Some(".cpp"),
+        scintilla::LexerKind::JavaScript => Some(".js"),
+        scintilla::LexerKind::Json => Some(".json"),
+        scintilla::LexerKind::Yaml => Some(".yaml"),
+        scintilla::LexerKind::PowerShell => Some(".ps1"),
+        scintilla::LexerKind::Python => Some(".py"),
+        scintilla::LexerKind::Html => Some(".html"),
+        scintilla::LexerKind::Xml => Some(".xml"),
+        scintilla::LexerKind::Css => Some(".css"),
+        scintilla::LexerKind::Properties => Some(".ini"),
+        scintilla::LexerKind::Markdown => Some(".md"),
+    }
+}
+
 fn create_doc_from_path(
     parent: HWND,
     instance: HINSTANCE,
@@ -5865,7 +5895,7 @@ fn open_file_dialog(hwnd: HWND) -> Result<Option<PathBuf>> {
     )))
 }
 
-fn save_file_dialog(hwnd: HWND, default_name: &str) -> Result<Option<PathBuf>> {
+fn save_file_dialog(hwnd: HWND, default_name: &str, default_ext: &str) -> Result<Option<PathBuf>> {
     let mut buffer = vec![0u16; 1024];
     let default_wide: Vec<u16> = OsStr::new(default_name)
         .encode_wide()
@@ -5874,7 +5904,10 @@ fn save_file_dialog(hwnd: HWND, default_name: &str) -> Result<Option<PathBuf>> {
     let copy_len = default_wide.len().min(buffer.len() - 1);
     buffer[..copy_len].copy_from_slice(&default_wide[..copy_len]);
     let filter = w!("All Files\0*.*\0\0");
-    let def_ext = w!("txt");
+    let def_ext_wide: Vec<u16> = OsStr::new(default_ext.trim_start_matches('.'))
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
 
     let mut ofn = OPENFILENAMEW {
         lStructSize: std::mem::size_of::<OPENFILENAMEW>() as u32,
@@ -5882,7 +5915,7 @@ fn save_file_dialog(hwnd: HWND, default_name: &str) -> Result<Option<PathBuf>> {
         lpstrFile: PWSTR(buffer.as_mut_ptr()),
         nMaxFile: buffer.len() as u32,
         lpstrFilter: PCWSTR(filter.as_ptr()),
-        lpstrDefExt: PCWSTR(def_ext.as_ptr()),
+        lpstrDefExt: PCWSTR(def_ext_wide.as_ptr()),
         Flags: OFN_EXPLORER | OFN_PATHMUSTEXIST | OFN_OVERWRITEPROMPT,
         ..Default::default()
     };
