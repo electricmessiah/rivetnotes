@@ -21,7 +21,9 @@ implemented deeply instead of spreading effort across a large plugin surface.
   - `Right` (vertical list)
 - Resizable vertical tab panel with persisted width
 - Dirty document indicators in both top and vertical tab views
-- Word wrap toggle and `Always On Top` toggle in the `View` menu
+- Quick-access toolbar row: `File`/`Edit`/`View` open the same menus as
+  before, plus one-click `New` and `Save As` icon buttons
+- Word wrap, line numbers, and `Always On Top` toggles in the `View` menu
 - Zoom (menu, shortcuts, or Ctrl+mousewheel) shared across all tabs and
   persisted between sessions
 - Live word count in the status bar
