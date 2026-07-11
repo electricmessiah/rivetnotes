@@ -3000,7 +3000,11 @@ fn update_status(state: &AppState) {
         if doc_tab.doc.is_dirty {
             flags.push('*');
         }
-        if let Some(ext) = doc_tab.lexer_override.and_then(extension_for_lexer) {
+        {
+            let ext = doc_tab
+                .lexer_override
+                .and_then(extension_for_lexer)
+                .unwrap_or(".txt");
             if !flags.is_empty() {
                 flags.push(' ');
             }
