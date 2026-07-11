@@ -12,17 +12,21 @@ use windows::Win32::Foundation::{
 };
 use windows::Win32::Graphics::Gdi::{
     BeginPaint, COLOR_BTNFACE, CreateFontW, CreatePen, CreateSolidBrush, DEFAULT_GUI_FONT,
-    DT_CENTER, DT_END_ELLIPSIS, DT_HIDEPREFIX, DT_NOPREFIX, DT_SINGLELINE, DT_VCENTER,
-    DeleteObject, DrawTextW, EndPaint, FillRect, GetStockObject, GetSysColorBrush, HBRUSH, HDC,
-    HFONT, HGDIOBJ, InvalidateRect, LineTo, MONITOR_DEFAULTTONULL, MonitorFromRect, MoveToEx,
-    PAINTSTRUCT, PS_SOLID, ScreenToClient, SelectObject, SetBkMode, SetTextColor, TRANSPARENT,
+    DT_CENTER, DT_END_ELLIPSIS, DT_HIDEPREFIX, DT_NOCLIP, DT_NOPREFIX, DT_SINGLELINE, DT_VCENTER,
+    DeleteDC, DeleteObject, DrawTextW, EndPaint, FillRect, GetDeviceCaps, GetStockObject,
+    GetSysColorBrush, HBRUSH, HDC, HFONT, HGDIOBJ, HORZRES, InvalidateRect, LOGPIXELSX, LOGPIXELSY,
+    LineTo, MONITOR_DEFAULTTONULL, MonitorFromRect, MoveToEx, PAINTSTRUCT, PS_SOLID,
+    ScreenToClient, SelectObject, SetBkMode, SetTextColor, TRANSPARENT, VERTRES,
 };
+use windows::Win32::Storage::Xps::{DOCINFOW, EndDoc, EndPage, StartDocW, StartPage};
 use windows::Win32::System::Com::CoTaskMemFree;
 use windows::Win32::System::DataExchange::COPYDATASTRUCT;
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows::Win32::System::SystemInformation::GetLocalTime;
 use windows::Win32::UI::Controls::Dialogs::{
     CommDlgExtendedError, GetOpenFileNameW, GetSaveFileNameW, OFN_EXPLORER, OFN_FILEMUSTEXIST,
-    OFN_OVERWRITEPROMPT, OFN_PATHMUSTEXIST, OPENFILENAMEW,
+    OFN_OVERWRITEPROMPT, OFN_PATHMUSTEXIST, OPENFILENAMEW, PD_NOPAGENUMS, PD_NOSELECTION,
+    PD_RETURNDC, PRINTDLGW, PrintDlgW,
 };
 use windows::Win32::UI::Controls::{
     CDDS_ITEMPOSTPAINT, CDDS_ITEMPREPAINT, CDDS_PREPAINT, CDRF_DODEFAULT, CDRF_NEWFONT,
@@ -111,6 +115,7 @@ const IDM_FILE_SAVE_AS_UTF8_BOM: u16 = 103;
 const IDM_FILE_SAVE_AS_UTF16_LE: u16 = 104;
 const IDM_FILE_SAVE_ALL: u16 = 105;
 const IDM_FILE_RELOAD: u16 = 106;
+const IDM_FILE_PRINT: u16 = 107;
 const IDM_FILE_EXIT: u16 = 199;
 const IDM_EDIT_UNDO: u16 = 300;
 const IDM_EDIT_REDO: u16 = 301;
@@ -215,6 +220,7 @@ const VK_Y: u16 = 0x59;
 const VK_Z: u16 = 0x5A;
 const VK_F3: u16 = 0x72;
 const VK_N: u16 = 0x4E;
+const VK_P: u16 = 0x50;
 const VK_S: u16 = 0x53;
 const VK_OEM_4: u16 = 0xDB;
 const VK_OEM_6: u16 = 0xDD;
@@ -727,6 +733,14 @@ fn create_menu() -> Result<HMENU> {
             IDM_FILE_SAVE_AS_UTF16_LE as usize,
             w!("Save As (UTF-16 LE)"),
         )?;
+        AppendMenuW(file_menu, MF_SEPARATOR, 0, PCWSTR::null())?;
+        AppendMenuW(
+            file_menu,
+            MF_STRING,
+            IDM_FILE_PRINT as usize,
+            w!("Print...\tCtrl+P"),
+        )?;
+        AppendMenuW(file_menu, MF_SEPARATOR, 0, PCWSTR::null())?;
         AppendMenuW(file_menu, MF_STRING, IDM_FILE_EXIT as usize, w!("Exit"))?;
         AppendMenuW(menu, MF_POPUP, file_menu.0 as usize, w!("File"))?;
 
@@ -1391,11 +1405,11 @@ unsafe extern "system" fn toolbar_row_wndproc(
                     );
                 },
                 IDC_TOOLBAR_PRINT => unsafe {
-                    MessageBoxW(
+                    let _ = PostMessageW(
                         main_hwnd,
-                        w!("Printing is not yet implemented."),
-                        w!("Rivet"),
-                        MB_ICONINFORMATION,
+                        WM_COMMAND,
+                        WPARAM(IDM_FILE_PRINT as usize),
+                        LPARAM(0),
                     );
                 },
                 _ => {}
@@ -1647,7 +1661,17 @@ fn create_accelerators() -> Result<HACCEL> {
             key: VK_PRIOR,
             cmd: CMD_TAB_PREV,
         },
-    ];
+        ACCEL {
+            fVirt: FVIRTKEY | FCONTROL,
+            key: VK_P,
+            cmd: IDM_FILE_PRINT,
+        },
+    ]
+    // CreateAcceleratorTableW intermittently failed with 0x800703E6 in
+    // --release builds once this array reached 35 stack-allocated entries
+    // (size-dependent, content-independent, release-only miscompilation).
+    // Heap-allocating it sidesteps that.
+    .to_vec();
 
     let accel = unsafe { CreateAcceleratorTableW(&accels)? };
     Ok(accel)
@@ -1880,6 +1904,14 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                 IDM_FILE_RELOAD => {
                     if let Some(state) = get_state(hwnd)
                         && let Err(err) = reload_active_from_disk(hwnd, state)
+                    {
+                        show_error("Rivet error", &err.to_string());
+                    }
+                    LRESULT(0)
+                }
+                IDM_FILE_PRINT => {
+                    if let Some(state) = get_state(hwnd)
+                        && let Err(err) = print_active_document(hwnd, state)
                     {
                         show_error("Rivet error", &err.to_string());
                     }
@@ -3351,6 +3383,210 @@ fn reload_active_from_disk(hwnd: HWND, state: &mut AppState) -> Result<()> {
         return Ok(());
     }
     reload_doc_from_path(hwnd, state, index, &path)
+}
+
+/// Prints the active document via the system Print dialog. Output is
+/// always black text on white (ignoring dark mode and syntax colors), and
+/// forces word wrap for the print job specifically so long lines aren't
+/// clipped at the page edge, regardless of the editor's live word-wrap
+/// setting. Line numbers print if the View > Line Numbers toggle is on,
+/// since that margin renders as part of the document like on screen. Each
+/// page gets a header (filename, centered) and footer ("Page X of Y",
+/// centered).
+fn print_active_document(hwnd: HWND, state: &AppState) -> Result<()> {
+    let Some(doc_tab) = state.docs.get(state.active) else {
+        return Ok(());
+    };
+    let editor = doc_tab.editor;
+    let filename = tab_base_name(doc_tab);
+    let date_str = current_print_date_string();
+
+    let mut pd = PRINTDLGW {
+        lStructSize: std::mem::size_of::<PRINTDLGW>() as u32,
+        hwndOwner: hwnd,
+        Flags: PD_RETURNDC | PD_NOSELECTION | PD_NOPAGENUMS,
+        ..Default::default()
+    };
+    let ok = unsafe { PrintDlgW(&mut pd) };
+    if !ok.as_bool() || pd.hDC.0 == 0 {
+        // User cancelled, or the dialog failed to hand back a device
+        // context — nothing to print.
+        return Ok(());
+    }
+    let print_hdc = pd.hDC;
+
+    scintilla::prepare_for_print(editor);
+
+    // The printer HDC's own (0, 0) origin already sits at the printable
+    // area's top-left corner, so measuring margins from HORZRES/VERTRES
+    // (the printable area) needs no PHYSICALOFFSET correction — mixing the
+    // two previously pushed the header/footer bands off the top of the
+    // page on printers with a nonzero physical offset.
+    let page_w = unsafe { GetDeviceCaps(print_hdc, HORZRES) };
+    let page_h = unsafe { GetDeviceCaps(print_hdc, VERTRES) };
+    let dpi_x = unsafe { GetDeviceCaps(print_hdc, LOGPIXELSX) };
+    let dpi_y = unsafe { GetDeviceCaps(print_hdc, LOGPIXELSY) };
+
+    let page_rect = scintilla::PrintRect {
+        left: 0,
+        top: 0,
+        right: page_w,
+        bottom: page_h,
+    };
+    // 1" margins.
+    let left = dpi_x;
+    let right = page_w - dpi_x;
+    let band_height = dpi_y / 3;
+    let header_top = dpi_y;
+    let content_top = header_top + band_height;
+    let footer_top = page_h - dpi_y - band_height;
+    let content_rect = scintilla::PrintRect {
+        left,
+        top: content_top,
+        right,
+        bottom: footer_top,
+    };
+
+    let doc_len = scintilla::get_length(editor);
+
+    // Dry-run pass (draw = false) to count total pages up front, needed for
+    // the "Page X of Y" footer before the real job starts spooling.
+    let mut total_pages = 0usize;
+    let mut pos = 0usize;
+    while pos < doc_len {
+        let next = scintilla::format_range(
+            editor,
+            false,
+            print_hdc.0,
+            content_rect,
+            page_rect,
+            pos,
+            doc_len,
+        );
+        total_pages += 1;
+        if next <= pos {
+            break;
+        }
+        pos = next;
+    }
+    scintilla::end_format_range(editor);
+    let total_pages = total_pages.max(1);
+
+    let doc_name = to_wide(&filename);
+    let doc_info = DOCINFOW {
+        cbSize: std::mem::size_of::<DOCINFOW>() as i32,
+        lpszDocName: PCWSTR(doc_name.as_ptr()),
+        ..Default::default()
+    };
+    let job_started = unsafe { StartDocW(print_hdc, &doc_info) } > 0;
+    if !job_started {
+        unsafe {
+            let _ = DeleteDC(print_hdc);
+        }
+        return Err(AppError::new("Failed to start print job.".to_string()));
+    }
+
+    pos = 0;
+    let mut page_num = 1usize;
+    loop {
+        unsafe {
+            StartPage(print_hdc);
+        }
+        draw_print_band(
+            print_hdc,
+            left,
+            right,
+            header_top,
+            dpi_y,
+            &format!("{filename} \u{2014} {date_str}"),
+        );
+        draw_print_band(
+            print_hdc,
+            left,
+            right,
+            footer_top,
+            dpi_y,
+            &format!("Page {page_num} of {total_pages}"),
+        );
+        let next = scintilla::format_range(
+            editor,
+            true,
+            print_hdc.0,
+            content_rect,
+            page_rect,
+            pos,
+            doc_len,
+        );
+        unsafe {
+            EndPage(print_hdc);
+        }
+        if next <= pos || next >= doc_len {
+            break;
+        }
+        pos = next;
+        page_num += 1;
+    }
+    unsafe {
+        EndDoc(print_hdc);
+    }
+    scintilla::end_format_range(editor);
+    unsafe {
+        let _ = DeleteDC(print_hdc);
+    }
+    Ok(())
+}
+
+/// Draws one line of header/footer text centered between `left` and
+/// `right` at vertical position `y`, in plain black — used for both the
+/// filename (header) and page number (footer) bands.
+fn draw_print_band(hdc: HDC, left: i32, right: i32, y: i32, dpi_y: i32, text: &str) {
+    let font = print_band_font(dpi_y);
+    let old_font = unsafe { SelectObject(hdc, HGDIOBJ(font.0)) };
+    unsafe {
+        SetTextColor(hdc, COLORREF(0x00000000));
+        SetBkMode(hdc, TRANSPARENT);
+    }
+    let mut rect = RECT {
+        left,
+        top: y,
+        right,
+        bottom: y + dpi_y / 4,
+    };
+    // DrawTextW takes cchtext from this slice's exact length, so it must
+    // NOT be null-terminated (to_wide() is, for null-terminated Win32 APIs
+    // like DOCINFOW below) — a trailing NUL here gets counted as an extra
+    // character. DT_NOCLIP keeps this rect (used only for centering) from
+    // truncating the text against its own bounds if the estimate is off.
+    let mut text_wide: Vec<u16> = text.encode_utf16().collect();
+    unsafe {
+        DrawTextW(
+            hdc,
+            &mut text_wide,
+            &mut rect,
+            DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOCLIP,
+        );
+        SelectObject(hdc, old_font);
+    }
+}
+
+fn print_band_font(dpi_y: i32) -> HFONT {
+    // 10pt, converted to device units for this printer's actual resolution
+    // (`-MulDiv`-style point-to-pixel conversion) rather than a fixed pixel
+    // size, since a printer's LOGPIXELSY is usually far higher than a
+    // screen's.
+    let height = -(10 * dpi_y / 72);
+    HFONT(unsafe { CreateFontW(height, 0, 0, 0, 400, 0, 0, 0, 1, 0, 0, 0, 0, w!("Segoe UI")) }.0)
+}
+
+/// Current local date as "YYYY-MM-DD", for the print header.
+fn current_print_date_string() -> String {
+    let st = unsafe { GetLocalTime() };
+    format!("{:04}-{:02}-{:02}", st.wYear, st.wMonth, st.wDay)
+}
+
+/// Null-terminated UTF-16 buffer for Win32 string APIs.
+fn to_wide(s: &str) -> Vec<u16> {
+    s.encode_utf16().chain(std::iter::once(0)).collect()
 }
 
 fn prompt_discard_and_reload(hwnd: HWND) -> bool {
