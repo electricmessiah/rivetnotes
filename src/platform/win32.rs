@@ -1,7 +1,7 @@
 use std::io::BufRead;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::OnceLock;
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -1026,34 +1026,44 @@ fn register_window_class(
 }
 
 /// Segoe Fluent Icons / Segoe MDL2 Assets glyph font, used for the toolbar
-/// row's icon buttons. Created once and leaked for the process lifetime
-/// (matches the existing `cached_solid_brush` pattern for GDI objects that
-/// live as long as the app).
+/// row's icon buttons. Cached per-DPI (and leaked, matching the existing
+/// `cached_solid_brush` pattern for GDI objects that live as long as the
+/// app) since the window's DPI can settle after the font is first needed
+/// (e.g. during early WM_CREATE/WM_SIZE before Windows reports the final
+/// per-monitor DPI), and a stale font would leave icons the wrong size.
 fn toolbar_icon_font(hwnd: HWND) -> HFONT {
-    static CACHE: OnceLock<isize> = OnceLock::new();
-    let handle = *CACHE.get_or_init(|| {
-        let height = -scale_for_dpi(hwnd, 16);
-        let font = unsafe {
-            CreateFontW(
-                height,
-                0,
-                0,
-                0,
-                400,
-                0,
-                0,
-                0,
-                1,
-                0,
-                0,
-                0,
-                0,
-                w!("Segoe Fluent Icons"),
-            )
-        };
-        font.0
-    });
-    HFONT(handle)
+    static CACHE: Mutex<Option<(u32, isize)>> = Mutex::new(None);
+    let dpi = unsafe { GetDpiForWindow(hwnd) };
+    let mut cache = match CACHE.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    if let Some((cached_dpi, handle)) = *cache
+        && cached_dpi == dpi
+    {
+        return HFONT(handle);
+    }
+    let height = -scale_for_dpi(hwnd, 16);
+    let font = unsafe {
+        CreateFontW(
+            height,
+            0,
+            0,
+            0,
+            400,
+            0,
+            0,
+            0,
+            1,
+            0,
+            0,
+            0,
+            0,
+            w!("Segoe Fluent Icons"),
+        )
+    };
+    *cache = Some((dpi, font.0));
+    font
 }
 
 /// Creates the File/Edit/View label buttons and New/Save As/Print icon
