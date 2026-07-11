@@ -1298,12 +1298,28 @@ unsafe extern "system" fn toolbar_row_wndproc(
             unsafe {
                 let _ = GetClientRect(hwnd, &mut rect);
             }
-            let brush = match dialog_dark_theme(hwnd) {
+            let theme = dialog_dark_theme(hwnd);
+            let brush = match theme {
                 Some(theme) => dark_mode::cached_solid_brush(theme.bg),
                 None => unsafe { GetSysColorBrush(COLOR_BTNFACE) },
             };
             unsafe {
                 let _ = FillRect(HDC(wparam.0 as isize), &rect, brush);
+            }
+            // Dark theme colors the toolbar row the same background as the
+            // editor/tabs below it, so without a seam the row visually
+            // blends into the content area. theme.border (used for the tab
+            // strip elsewhere) is too close to the dark bg to read as a
+            // seam here, so use a brighter dedicated shade and scale the
+            // line thickness with DPI so it stays visible at high scaling.
+            if theme.is_some() {
+                let thickness = scale_for_dpi(hwnd, 1).max(1);
+                let mut border_rect = rect;
+                border_rect.top = border_rect.bottom - thickness;
+                let border_brush = dark_mode::cached_solid_brush(color_ref(90, 90, 90));
+                unsafe {
+                    let _ = FillRect(HDC(wparam.0 as isize), &border_rect, border_brush);
+                }
             }
             LRESULT(1)
         }
