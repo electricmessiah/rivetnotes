@@ -1221,6 +1221,16 @@ fn draw_toolbar_row_button(toolbar_row: HWND, lparam: LPARAM) {
     };
     let mut text_wide: Vec<u16> = text.encode_utf16().collect();
     let mut rect = dis.rcItem;
+    if !is_icon {
+        // DT_VCENTER centers on each font's own metrics, and the Segoe
+        // Fluent Icons glyphs sit lower in their em-box than regular UI
+        // text does in DEFAULT_GUI_FONT — so at the same rect, label text
+        // visually sits higher than the icons beside it. Nudge it down a
+        // couple pixels to match.
+        let nudge = scale_for_dpi(toolbar_row, 2);
+        rect.top += nudge;
+        rect.bottom += nudge;
+    }
     unsafe {
         DrawTextW(
             dis.hDC,
