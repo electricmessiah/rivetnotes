@@ -271,6 +271,7 @@ const IDC_TOOLBAR_EDIT: usize = 5401;
 const IDC_TOOLBAR_VIEW: usize = 5402;
 const IDC_TOOLBAR_NEW: usize = 5403;
 const IDC_TOOLBAR_SAVE_AS: usize = 5404;
+const IDC_TOOLBAR_PRINT: usize = 5405;
 const TOOLBAR_ROW_HEIGHT: i32 = 34;
 
 const SCFIND_MATCHCASE: usize = 0x4;
@@ -1108,9 +1109,10 @@ fn create_toolbar_row_buttons(toolbar_row: HWND, instance: HINSTANCE) -> Result<
 
     // Icon buttons are positioned right-aligned by toolbar_row_wndproc's
     // WM_SIZE handler; the x here is just a harmless initial placement.
-    let icons: [(usize, &str, PCWSTR); 2] = [
+    let icons: [(usize, &str, PCWSTR); 3] = [
         (IDC_TOOLBAR_NEW, "\u{E7C3}", w!("New File (Ctrl+N)")),
         (IDC_TOOLBAR_SAVE_AS, "\u{E792}", w!("Save As...")),
+        (IDC_TOOLBAR_PRINT, "\u{E749}", w!("Print")),
     ];
     let font = toolbar_icon_font(toolbar_row);
     let tooltip = create_toolbar_tooltip(toolbar_row, instance);
@@ -1207,7 +1209,10 @@ fn draw_toolbar_row_button(toolbar_row: HWND, lparam: LPARAM) {
         let _ = FillRect(dis.hDC, &dis.rcItem, bg);
     }
 
-    let is_icon = matches!(dis.CtlID as usize, IDC_TOOLBAR_NEW | IDC_TOOLBAR_SAVE_AS);
+    let is_icon = matches!(
+        dis.CtlID as usize,
+        IDC_TOOLBAR_NEW | IDC_TOOLBAR_SAVE_AS | IDC_TOOLBAR_PRINT
+    );
     let font = if is_icon {
         toolbar_icon_font(toolbar_row)
     } else {
@@ -1265,7 +1270,7 @@ fn layout_toolbar_row_icons(toolbar_row: HWND) {
     let y = (TOOLBAR_ROW_HEIGHT - 26) / 2;
     let y = scale_for_dpi(toolbar_row, y.max(0));
     let margin = scale_for_dpi(toolbar_row, 4);
-    let ids = [IDC_TOOLBAR_SAVE_AS, IDC_TOOLBAR_NEW];
+    let ids = [IDC_TOOLBAR_PRINT, IDC_TOOLBAR_SAVE_AS, IDC_TOOLBAR_NEW];
     let mut x = width - margin - icon_width;
     for id in ids {
         let child = unsafe { GetDlgItem(toolbar_row, id as i32) };
@@ -1383,6 +1388,14 @@ unsafe extern "system" fn toolbar_row_wndproc(
                         WM_COMMAND,
                         WPARAM(IDM_FILE_SAVE_AS as usize),
                         LPARAM(0),
+                    );
+                },
+                IDC_TOOLBAR_PRINT => unsafe {
+                    MessageBoxW(
+                        main_hwnd,
+                        w!("Printing is not yet implemented."),
+                        w!("Rivet"),
+                        MB_ICONINFORMATION,
                     );
                 },
                 _ => {}
@@ -7204,6 +7217,7 @@ fn set_editor_dark_mode(hwnd: HWND, state: &mut AppState, enabled: bool) {
             IDC_TOOLBAR_VIEW,
             IDC_TOOLBAR_NEW,
             IDC_TOOLBAR_SAVE_AS,
+            IDC_TOOLBAR_PRINT,
         ] {
             let child = GetDlgItem(state.toolbar_row, id as i32);
             if child.0 != 0 {
