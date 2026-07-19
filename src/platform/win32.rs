@@ -75,12 +75,12 @@ use windows::Win32::UI::WindowsAndMessaging::{
     TPM_TOPALIGN, TrackPopupMenu, TranslateAcceleratorW, TranslateMessage, WINDOW_STYLE,
     WINDOWPLACEMENT, WINDOWPLACEMENT_FLAGS, WM_ACTIVATEAPP, WM_CAPTURECHANGED, WM_CHAR, WM_CLOSE,
     WM_COMMAND, WM_CONTEXTMENU, WM_COPYDATA, WM_CREATE, WM_CTLCOLORBTN, WM_CTLCOLORDLG,
-    WM_CTLCOLOREDIT, WM_CTLCOLORLISTBOX, WM_CTLCOLORSTATIC, WM_DESTROY, WM_DRAWITEM, WM_DROPFILES,
-    WM_ERASEBKGND, WM_GETFONT, WM_GETICON, WM_INITMENUPOPUP, WM_KEYDOWN, WM_LBUTTONDOWN,
-    WM_LBUTTONUP, WM_MBUTTONUP, WM_MOUSEMOVE, WM_NCDESTROY, WM_NOTIFY, WM_NULL, WM_PAINT,
-    WM_SETCURSOR, WM_SETFONT, WM_SETICON, WM_SIZE, WM_TIMER, WNDCLASSEXW, WPF_RESTORETOMAXIMIZED,
-    WS_BORDER, WS_CAPTION, WS_CHILD, WS_CLIPSIBLINGS, WS_OVERLAPPEDWINDOW, WS_POPUP, WS_SYSMENU,
-    WS_TABSTOP, WS_VISIBLE, WS_VSCROLL,
+    WM_CTLCOLOREDIT, WM_CTLCOLORLISTBOX, WM_CTLCOLORSTATIC, WM_DESTROY, WM_DPICHANGED, WM_DRAWITEM,
+    WM_DROPFILES, WM_ERASEBKGND, WM_GETFONT, WM_GETICON, WM_INITMENUPOPUP, WM_KEYDOWN,
+    WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MBUTTONUP, WM_MOUSEMOVE, WM_NCDESTROY, WM_NOTIFY, WM_NULL,
+    WM_PAINT, WM_SETCURSOR, WM_SETFONT, WM_SETICON, WM_SIZE, WM_TIMER, WNDCLASSEXW,
+    WPF_RESTORETOMAXIMIZED, WS_BORDER, WS_CAPTION, WS_CHILD, WS_CLIPSIBLINGS, WS_OVERLAPPEDWINDOW,
+    WS_POPUP, WS_SYSMENU, WS_TABSTOP, WS_VISIBLE, WS_VSCROLL,
 };
 use windows::core::PWSTR;
 use windows::core::{HSTRING, PCWSTR, w};
@@ -1252,6 +1252,38 @@ fn draw_toolbar_row_button(toolbar_row: HWND, lparam: LPARAM) {
     }
 }
 
+/// Repositions the File/Edit/View label buttons for the toolbar row's
+/// current size/DPI, called from `WM_SIZE`. Without this, the labels stay
+/// at whatever position/size was computed once at button-creation time —
+/// they never picked up a later resize or DPI change (e.g. dragging the
+/// window to a monitor with a different DPI), which is what produced the
+/// mis-sized/clipped labels in that scenario. The icon buttons already
+/// re-layout on every `WM_SIZE` via `layout_toolbar_row_icons`.
+fn layout_toolbar_row_labels(toolbar_row: HWND) {
+    let label_height = scale_for_dpi(toolbar_row, 26);
+    let label_width = scale_for_dpi(toolbar_row, 56);
+    let y = (TOOLBAR_ROW_HEIGHT - 26) / 2;
+    let y = scale_for_dpi(toolbar_row, y.max(0));
+    let ids = [IDC_TOOLBAR_FILE, IDC_TOOLBAR_EDIT, IDC_TOOLBAR_VIEW];
+    for (slot, id) in ids.into_iter().enumerate() {
+        let x = scale_for_dpi(toolbar_row, 4) + slot as i32 * label_width;
+        let child = unsafe { GetDlgItem(toolbar_row, id as i32) };
+        if child.0 != 0 {
+            unsafe {
+                let _ = SetWindowPos(
+                    child,
+                    HWND(0),
+                    x,
+                    y,
+                    label_width,
+                    label_height,
+                    SWP_NOZORDER | SWP_NOACTIVATE,
+                );
+            }
+        }
+    }
+}
+
 /// Repositions the New/Save As/Print icon buttons to hug the right edge of
 /// the toolbar row, called from `WM_SIZE`.
 fn layout_toolbar_row_icons(toolbar_row: HWND) {
@@ -1334,6 +1366,7 @@ unsafe extern "system" fn toolbar_row_wndproc(
             LRESULT(1)
         }
         WM_SIZE => {
+            layout_toolbar_row_labels(hwnd);
             layout_toolbar_row_icons(hwnd);
             LRESULT(0)
         }
@@ -1813,6 +1846,37 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
             unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
         }
         WM_SIZE => {
+            if let Some(state) = get_state(hwnd) {
+                layout_children(hwnd, state);
+            }
+            LRESULT(0)
+        }
+        WM_DPICHANGED => {
+            // Fires when the window moves to a monitor with a different
+            // DPI (e.g. dragged from a 4K display to a 1080p one). lParam
+            // points to Windows' suggested new window rect for the new
+            // DPI; if we don't move/resize to it ourselves, the window
+            // stays at its old physical pixel size. If the move alone
+            // doesn't change the window's width/height, WM_SIZE never
+            // fires and our DPI-dependent chrome (the toolbar row, in
+            // particular) never re-lays-out — its geometry and fonts stay
+            // stale from the old monitor's DPI, which is what produces
+            // the cut-off/mis-sized toolbar after a cross-monitor drag.
+            // Calling layout_children() directly (rather than relying on
+            // the SetWindowPos below to trigger WM_SIZE on its own) covers
+            // that case too.
+            let suggested = unsafe { &*(lparam.0 as *const RECT) };
+            unsafe {
+                let _ = SetWindowPos(
+                    hwnd,
+                    HWND(0),
+                    suggested.left,
+                    suggested.top,
+                    suggested.right - suggested.left,
+                    suggested.bottom - suggested.top,
+                    SWP_NOZORDER | SWP_NOACTIVATE,
+                );
+            }
             if let Some(state) = get_state(hwnd) {
                 layout_children(hwnd, state);
             }
